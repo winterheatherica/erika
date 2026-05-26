@@ -4,6 +4,9 @@ mod export;
 mod image_ref;
 mod persist;
 mod svg_export;
+mod ui_canvas;
+mod ui_sidepanel;
+mod ui_topbar;
 
 use app::App;
 
