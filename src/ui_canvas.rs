@@ -127,24 +127,54 @@ impl App {
                 self.draw_curve(&painter, rect, c);
             }
         } else {
-            let total = self.total_draw_units() as f32;
-            let units_at = progress * total;
-            let mut elapsed = 0.0_f32;
-            for c in &self.curves {
+            let mut units: Vec<(usize, u64)> = Vec::new();
+            for (ci, c) in self.curves.iter().enumerate() {
                 if !c.visible {
                     continue;
                 }
                 let count = c.draw_units();
-                if count == 0 {
+                for ui in 0..count {
+                    let ts = c.created_at.get(ui).copied().unwrap_or(u64::MAX);
+                    units.push((ci, ts));
+                }
+            }
+            units.sort_unstable_by_key(|&(_, ts)| ts);
+
+            let total = units.len() as f32;
+            let units_at = progress * total;
+            let full_count = units_at.floor() as usize;
+            let partial_frac = units_at - full_count as f32;
+
+            let mut per_curve_full = vec![0_usize; self.curves.len()];
+            let mut per_curve_partial = vec![0.0_f32; self.curves.len()];
+            for (i, &(ci, _)) in units.iter().enumerate() {
+                if i < full_count {
+                    per_curve_full[ci] += 1;
+                } else if i == full_count {
+                    if partial_frac > 0.0 {
+                        per_curve_partial[ci] = partial_frac;
+                    }
+                    break;
+                } else {
+                    break;
+                }
+            }
+
+            for (ci, c) in self.curves.iter().enumerate() {
+                if !c.visible {
                     continue;
                 }
-                let end = elapsed + count as f32;
-                if units_at >= end {
-                    self.draw_curve(&painter, rect, c);
-                } else if units_at > elapsed {
-                    self.draw_curve_partial(&painter, rect, c, units_at - elapsed);
+                let full = per_curve_full[ci];
+                let partial = per_curve_partial[ci];
+                let amount = full as f32 + partial;
+                if amount <= 0.0 {
+                    continue;
                 }
-                elapsed = end;
+                if full >= c.draw_units() {
+                    self.draw_curve(&painter, rect, c);
+                } else {
+                    self.draw_curve_partial(&painter, rect, c, amount);
+                }
             }
         }
 

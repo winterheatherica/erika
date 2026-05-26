@@ -80,6 +80,8 @@ pub struct App {
     pub(crate) playback_duration_secs: f32,
     pub(crate) playback_loop: bool,
     pub(crate) playback_last_tick: Option<std::time::Instant>,
+
+    pub(crate) next_created: u64,
 }
 
 impl App {
@@ -124,6 +126,30 @@ impl App {
             playback_duration_secs: 5.0,
             playback_loop: false,
             playback_last_tick: None,
+            next_created: 0,
+        }
+    }
+
+    pub(crate) fn sync_created_at(&mut self) {
+        let max_existing = self
+            .curves
+            .iter()
+            .flat_map(|c| c.created_at.iter().copied())
+            .max();
+        if let Some(m) = max_existing {
+            if self.next_created <= m {
+                self.next_created = m + 1;
+            }
+        }
+        for c in &mut self.curves {
+            let want = c.draw_units();
+            if c.created_at.len() > want {
+                c.created_at.truncate(want);
+            }
+            while c.created_at.len() < want {
+                c.created_at.push(self.next_created);
+                self.next_created += 1;
+            }
         }
     }
 
@@ -443,6 +469,7 @@ impl App {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.last_committed_curves = self.curves.clone();
+        self.sync_created_at();
     }
 
     pub(crate) fn move_curve_forward(&mut self, i: usize) {
@@ -605,6 +632,7 @@ impl eframe::App for App {
             img.ensure_loaded(ctx, 10.0);
         }
 
+        self.sync_created_at();
         self.tick_playback(ctx);
 
         if self.pending_fit_view {

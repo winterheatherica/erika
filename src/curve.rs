@@ -156,6 +156,8 @@ pub struct CurveSet {
     pub fill_color: [u8; 4],
     #[serde(default)]
     pub active_segment: usize,
+    #[serde(default)]
+    pub created_at: Vec<u64>,
 }
 
 impl CurveSet {
@@ -182,6 +184,7 @@ impl CurveSet {
             fill_enabled: false,
             fill_color: [color[0], color[1], color[2], 60],
             active_segment: 0,
+            created_at: Vec::new(),
         }
     }
 
