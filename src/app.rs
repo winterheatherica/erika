@@ -3,10 +3,26 @@ use std::path::PathBuf;
 use eframe::egui;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
-use crate::curve::{Arr, CurveSet, LineStyle, P, PALETTE};
+use crate::curve::{Arr, CurveKind, CurveSet, LineStyle, P, PALETTE};
 use crate::export::{ExportConfig, export_png};
 use crate::image_ref::ReferenceImage;
 use crate::persist::{CameraState, Project};
+use crate::svg_export::{SvgConfig, export_svg};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandleId {
+    Bezier(usize, Arr, usize),
+    EllipseCenter(usize),
+    EllipseRx(usize),
+    EllipseRy(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColorPickTarget {
+    Stroke(usize),
+    Fill(usize),
+    Background,
+}
 
 pub struct App {
     pub curves: Vec<CurveSet>,
@@ -16,7 +32,7 @@ pub struct App {
     pub center_y: f32,
     pub scale: f32,
 
-    dragging_handle: Option<(usize, Arr, usize)>,
+    dragging_handle: Option<HandleId>,
     dragging_image: bool,
     drag_image_offset: Vec2,
     panning: bool,
@@ -32,14 +48,19 @@ pub struct App {
     image_drag_enabled: bool,
     pending_fit_view: bool,
 
+    color_pick_target: Option<ColorPickTarget>,
+    last_picked_color: Option<[u8; 4]>,
+
     export_path: String,
     export_w: u32,
     export_h: u32,
     export_transparent: bool,
     export_samples: usize,
+    svg_export_path: String,
     last_msg: Option<String>,
 
     new_curve_name: String,
+    new_curve_kind: CurveKind,
     current_project_path: Option<PathBuf>,
 
     undo_stack: Vec<Vec<CurveSet>>,
@@ -69,13 +90,17 @@ impl App {
             reference_image: None,
             image_drag_enabled: false,
             pending_fit_view: false,
+            color_pick_target: None,
+            last_picked_color: None,
             export_path: "output.png".into(),
             export_w: 1024,
             export_h: 1024,
             export_transparent: false,
             export_samples: 64,
+            svg_export_path: "output.svg".into(),
             last_msg: None,
             new_curve_name: String::new(),
+            new_curve_kind: CurveKind::Bezier,
             current_project_path: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -85,8 +110,7 @@ impl App {
 
     fn commit_if_changed(&mut self) {
         if self.curves != self.last_committed_curves {
-            let prev =
-                std::mem::replace(&mut self.last_committed_curves, self.curves.clone());
+            let prev = std::mem::replace(&mut self.last_committed_curves, self.curves.clone());
             self.undo_stack.push(prev);
             self.redo_stack.clear();
             if self.undo_stack.len() > 200 {
@@ -144,28 +168,59 @@ impl App {
         )
     }
 
-    fn find_handle(&self, rect: Rect, pos: Pos2) -> Option<(usize, Arr, usize)> {
+    fn ellipse_rx_endpoint(c: &CurveSet) -> P {
+        let r = c.ellipse_rot_deg.to_radians();
+        P::new(
+            c.ellipse_cx + c.ellipse_rx * r.cos(),
+            c.ellipse_cy + c.ellipse_rx * r.sin(),
+        )
+    }
+
+    fn ellipse_ry_endpoint(c: &CurveSet) -> P {
+        let r = (c.ellipse_rot_deg + 90.0).to_radians();
+        P::new(
+            c.ellipse_cx + c.ellipse_ry * r.cos(),
+            c.ellipse_cy + c.ellipse_ry * r.sin(),
+        )
+    }
+
+    fn find_handle(&self, rect: Rect, pos: Pos2) -> Option<HandleId> {
         let ci = self.selected;
         let c = self.curves.get(ci)?;
         if !c.visible || !c.show_handles {
             return None;
         }
-        let n = c.n();
-        if n == 0 {
-            return None;
-        }
-        let active = c.active_segment.min(n - 1);
-
-        let mut best: Option<((usize, Arr, usize), f32)> = None;
-        for a in Arr::all() {
-            let arr = c.get(a);
-            if active >= arr.len() {
-                continue;
-            }
-            let sp = self.w2s(rect, arr[active]);
+        let threshold_sq = 14.0 * 14.0;
+        let mut best: Option<(HandleId, f32)> = None;
+        let mut consider = |h: HandleId, p: P| {
+            let sp = self.w2s(rect, p);
             let d2 = (sp - pos).length_sq();
-            if d2 < 14.0 * 14.0 && best.map_or(true, |(_, bd)| d2 <= bd) {
-                best = Some(((ci, a, active), d2));
+            if d2 < threshold_sq && best.map_or(true, |(_, bd)| d2 <= bd) {
+                best = Some((h, d2));
+            }
+        };
+
+        match c.kind {
+            CurveKind::Bezier => {
+                let n = c.n();
+                if n == 0 {
+                    return None;
+                }
+                let active = c.active_segment.min(n - 1);
+                for a in Arr::all() {
+                    let arr = c.get(a);
+                    if active < arr.len() {
+                        consider(HandleId::Bezier(ci, a, active), arr[active]);
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                consider(
+                    HandleId::EllipseCenter(ci),
+                    P::new(c.ellipse_cx, c.ellipse_cy),
+                );
+                consider(HandleId::EllipseRx(ci), Self::ellipse_rx_endpoint(c));
+                consider(HandleId::EllipseRy(ci), Self::ellipse_ry_endpoint(c));
             }
         }
         best.map(|(h, _)| h)
@@ -187,6 +242,45 @@ impl App {
         }
     }
 
+    fn update_dragged_handle(&mut self, world: P) {
+        let Some(handle) = self.dragging_handle else {
+            return;
+        };
+        match handle {
+            HandleId::Bezier(ci, a, pi) => {
+                let arr = self.curves[ci].get_mut(a);
+                if pi < arr.len() {
+                    arr[pi] = world;
+                    self.apply_continuity_after_drag(ci, a, pi);
+                }
+            }
+            HandleId::EllipseCenter(ci) => {
+                let c = &mut self.curves[ci];
+                c.ellipse_cx = world.x;
+                c.ellipse_cy = world.y;
+            }
+            HandleId::EllipseRx(ci) => {
+                let c = &mut self.curves[ci];
+                let dx = world.x - c.ellipse_cx;
+                let dy = world.y - c.ellipse_cy;
+                let r = (dx * dx + dy * dy).sqrt();
+                if r > 1e-4 {
+                    c.ellipse_rx = r;
+                    c.ellipse_rot_deg = dy.atan2(dx).to_degrees();
+                }
+            }
+            HandleId::EllipseRy(ci) => {
+                let c = &mut self.curves[ci];
+                let dx = world.x - c.ellipse_cx;
+                let dy = world.y - c.ellipse_cy;
+                let r = (dx * dx + dy * dy).sqrt();
+                if r > 1e-4 {
+                    c.ellipse_ry = r;
+                    c.ellipse_rot_deg = dy.atan2(dx).to_degrees() - 90.0;
+                }
+            }
+        }
+    }
 
     fn fit_to_curves(&mut self, viewport_px: Vec2) {
         let mut min_x = f32::INFINITY;
@@ -198,7 +292,7 @@ impl App {
             if !c.visible {
                 continue;
             }
-            for p in c.s1.iter().chain(&c.s2).chain(&c.s3) {
+            for p in c.sampled_path(32) {
                 min_x = min_x.min(p.x);
                 max_x = max_x.max(p.x);
                 min_y = min_y.min(p.y);
@@ -234,6 +328,7 @@ impl App {
                 let mut clone = i.clone();
                 clone.texture = None;
                 clone.load_error = None;
+                clone.raw_rgba = None;
                 clone
             }),
             camera: CameraState {
@@ -258,6 +353,7 @@ impl App {
         self.reference_image = p.reference_image.map(|mut i| {
             i.texture = None;
             i.load_error = None;
+            i.raw_rgba = None;
             i
         });
         self.center_x = p.camera.center_x;
@@ -337,6 +433,25 @@ impl App {
             self.last_msg = Some(format!("Image queued ← {}", path.display()));
         }
     }
+
+    fn apply_picked_color(&mut self, target: ColorPickTarget, rgba: [u8; 4]) {
+        match target {
+            ColorPickTarget::Stroke(ci) => {
+                if let Some(c) = self.curves.get_mut(ci) {
+                    c.color = [rgba[0], rgba[1], rgba[2]];
+                }
+            }
+            ColorPickTarget::Fill(ci) => {
+                if let Some(c) = self.curves.get_mut(ci) {
+                    c.fill_color = rgba;
+                }
+            }
+            ColorPickTarget::Background => {
+                self.background = [rgba[0], rgba[1], rgba[2]];
+            }
+        }
+        self.last_picked_color = Some(rgba);
+    }
 }
 
 impl eframe::App for App {
@@ -383,16 +498,23 @@ impl eframe::App for App {
         });
         let enter =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let escape =
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
+        if escape {
+            self.color_pick_target = None;
+        }
         if undo {
             self.undo();
         }
         if redo {
             self.redo();
         }
-        if enter && !self.curves.is_empty() {
+        if enter && self.color_pick_target.is_none() && !self.curves.is_empty() {
             let sel = self.selected.min(self.curves.len() - 1);
-            self.curves[sel].append_segment();
+            if self.curves[sel].is_bezier() {
+                self.curves[sel].append_segment();
+            }
         }
 
         let interacting = ctx.input(|i| {
@@ -418,8 +540,8 @@ impl App {
                 self.load_dialog();
             }
             ui.separator();
-            let undo_enabled = !self.undo_stack.is_empty()
-                || self.curves != self.last_committed_curves;
+            let undo_enabled =
+                !self.undo_stack.is_empty() || self.curves != self.last_committed_curves;
             let redo_enabled = !self.redo_stack.is_empty();
             if ui
                 .add_enabled(undo_enabled, egui::Button::new("↶ Undo"))
@@ -442,13 +564,28 @@ impl App {
             ui.checkbox(&mut self.link_continuity, "Link S3[i]=S1[i+1]");
             ui.separator();
             ui.label("Samples/seg:");
-            ui.add(egui::DragValue::new(&mut self.samples_per_segment).range(4..=256));
+            ui.add(egui::DragValue::new(&mut self.samples_per_segment).range(4..=512));
             ui.separator();
             if ui.button("Fit view").clicked() {
                 let size = ui.ctx().screen_rect().size();
                 self.fit_to_curves(size);
             }
             ui.separator();
+            ui.label("BG:");
+            let _ = ui.color_edit_button_srgb(&mut self.background);
+            let img_ready = self
+                .reference_image
+                .as_ref()
+                .map_or(false, |i| i.is_ready());
+            pick_color_button_widget(
+                ui,
+                ColorPickTarget::Background,
+                &mut self.color_pick_target,
+                img_ready,
+            );
+        });
+
+        ui.horizontal_wrapped(|ui| {
             ui.label("PNG:");
             ui.add(
                 egui::TextEdit::singleline(&mut self.export_path)
@@ -482,11 +619,38 @@ impl App {
                     Err(e) => format!("Error: {e}"),
                 });
             }
+            ui.separator();
+            ui.label("SVG:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.svg_export_path)
+                    .desired_width(160.0)
+                    .hint_text("output.svg"),
+            );
+            if ui.button("Export SVG").clicked() {
+                let path = PathBuf::from(&self.svg_export_path);
+                let bg = if self.export_transparent {
+                    None
+                } else {
+                    Some(self.background)
+                };
+                let cfg = SvgConfig {
+                    width: self.export_w,
+                    height: self.export_h,
+                    background: bg,
+                    padding_fraction: 0.05,
+                    path: &path,
+                };
+                self.last_msg = Some(match export_svg(&self.curves, &cfg) {
+                    Ok(()) => format!("Exported SVG → {}", path.display()),
+                    Err(e) => format!("Error: {e}"),
+                });
+            }
             if let Some(msg) = &self.last_msg {
                 ui.label(egui::RichText::new(msg).color(Color32::from_rgb(60, 100, 60)));
             }
         });
     }
+
 
     fn left_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("left_scroll").show(ui, |ui| {
@@ -494,7 +658,7 @@ impl App {
             ui.separator();
             self.image_section(ui);
             ui.separator();
-            self.points_section(ui);
+            self.shape_editor_section(ui);
         });
     }
 
@@ -503,17 +667,30 @@ impl App {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.new_curve_name)
-                    .hint_text("Curve name (optional)")
-                    .desired_width(180.0),
+                    .hint_text("Name (optional)")
+                    .desired_width(140.0),
             );
-            if ui.button("+ Add curve").clicked() {
+            egui::ComboBox::from_id_salt("new_curve_kind")
+                .selected_text(self.new_curve_kind.label())
+                .show_ui(ui, |ui| {
+                    for k in CurveKind::all() {
+                        ui.selectable_value(&mut self.new_curve_kind, k, k.label());
+                    }
+                });
+            if ui.button("+ Add").clicked() {
                 let name = if self.new_curve_name.trim().is_empty() {
                     format!("Curve {}", self.curves.len() + 1)
                 } else {
                     self.new_curve_name.trim().to_string()
                 };
                 let color = PALETTE[self.curves.len() % PALETTE.len()];
-                self.curves.push(CurveSet::empty(name, color));
+                let new_curve = match self.new_curve_kind {
+                    CurveKind::Bezier => CurveSet::empty(name, color),
+                    CurveKind::Ellipse => {
+                        CurveSet::new_ellipse(name, color, self.center_x, self.center_y)
+                    }
+                };
+                self.curves.push(new_curve);
                 self.selected = self.curves.len() - 1;
                 self.new_curve_name.clear();
             }
@@ -525,7 +702,11 @@ impl App {
             ui.horizontal(|ui| {
                 let _ = ui.color_edit_button_srgb(&mut c.color);
                 ui.checkbox(&mut c.visible, "");
-                let label = format!("{} ({} seg)", c.name, c.n());
+                let kind_tag = match c.kind {
+                    CurveKind::Bezier => "B",
+                    CurveKind::Ellipse => "E",
+                };
+                let label = format!("[{}] {}", kind_tag, c.name);
                 if ui.selectable_label(self.selected == i, label).clicked() {
                     select = Some(i);
                 }
@@ -544,7 +725,8 @@ impl App {
                     self.selected = self.curves.len() - 1;
                 }
             } else {
-                self.curves[i] = CurveSet::empty(format!("Curve {}", i + 1), PALETTE[i % PALETTE.len()]);
+                self.curves[i] =
+                    CurveSet::empty(format!("Curve {}", i + 1), PALETTE[i % PALETTE.len()]);
             }
         }
 
@@ -561,51 +743,37 @@ impl App {
             ui.label("Name:");
             ui.text_edit_singleline(&mut c.name);
         });
-
-        let n = c.n();
-        if n > 0 {
-            c.clamp_active_segment();
-            let active = c.active_segment;
-            ui.horizontal(|ui| {
-                ui.label("Active segment:");
-                if ui
-                    .add_enabled(active > 0, egui::Button::new("◀"))
-                    .clicked()
-                {
-                    c.active_segment = active.saturating_sub(1);
-                }
-                ui.label(
-                    egui::RichText::new(format!("{} / {}", active + 1, n))
-                        .monospace()
-                        .strong(),
-                );
-                if ui
-                    .add_enabled(active + 1 < n, egui::Button::new("▶"))
-                    .clicked()
-                {
-                    c.active_segment = active + 1;
-                }
-                ui.separator();
-                if ui.small_button("First").clicked() {
-                    c.active_segment = 0;
-                }
-                if ui.small_button("Last").clicked() {
-                    c.active_segment = n - 1;
-                }
-            });
-            ui.label(
-                egui::RichText::new(
-                    "Only handles of the active segment can be dragged on canvas.",
-                )
-                .small()
-                .weak(),
-            );
-        }
+        ui.horizontal(|ui| {
+            ui.label("Type:");
+            egui::ComboBox::from_id_salt(format!("kind_{}", sel))
+                .selected_text(c.kind.label())
+                .show_ui(ui, |ui| {
+                    for k in CurveKind::all() {
+                        ui.selectable_value(&mut c.kind, k, k.label());
+                    }
+                });
+        });
 
         ui.label("Stroke");
+        let img_ready = self
+            .reference_image
+            .as_ref()
+            .map_or(false, |i| i.is_ready());
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.stroke_visible, "Show");
             let _ = ui.color_edit_button_srgb(&mut c.color);
+        });
+        ui.horizontal(|ui| {
+            pick_color_button_widget(
+                ui,
+                ColorPickTarget::Stroke(sel),
+                &mut self.color_pick_target,
+                img_ready,
+            );
+            ui.label("← pick stroke from image");
+        });
+        let c = &mut self.curves[sel];
+        ui.horizontal(|ui| {
             ui.add(
                 egui::Slider::new(&mut c.thickness, 0.5..=10.0)
                     .text("thickness")
@@ -627,15 +795,26 @@ impl App {
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.fill_enabled, "Enabled");
             let _ = ui.color_edit_button_srgba_unmultiplied(&mut c.fill_color);
-            ui.label("(alpha in color picker)");
         });
+        ui.horizontal(|ui| {
+            pick_color_button_widget(
+                ui,
+                ColorPickTarget::Fill(sel),
+                &mut self.color_pick_target,
+                img_ready,
+            );
+            ui.label("← pick fill from image");
+        });
+        let c = &mut self.curves[sel];
 
         ui.label("Handles & control polygon");
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.show_handles, "Handles");
-            ui.checkbox(&mut c.show_control_poly, "Control polygon");
+            if c.is_bezier() {
+                ui.checkbox(&mut c.show_control_poly, "Control polygon");
+            }
         });
-        if c.show_control_poly {
+        if c.is_bezier() && c.show_control_poly {
             ui.horizontal(|ui| {
                 ui.label("CP thickness:");
                 ui.add(egui::Slider::new(&mut c.control_poly_thickness, 0.5..=6.0));
@@ -654,6 +833,21 @@ impl App {
             }
         });
 
+        if let Some(picked) = self.last_picked_color {
+            ui.horizontal(|ui| {
+                ui.label("Last picked:");
+                let preview =
+                    Color32::from_rgba_unmultiplied(picked[0], picked[1], picked[2], picked[3]);
+                let (rect_r, _) =
+                    ui.allocate_exact_size(egui::vec2(20.0, 14.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect_r, 2.0, preview);
+                ui.label(format!(
+                    "#{:02x}{:02x}{:02x}{:02x}",
+                    picked[0], picked[1], picked[2], picked[3]
+                ));
+            });
+        }
+
         let Some(img) = &mut self.reference_image else {
             ui.label(egui::RichText::new("No image loaded").italics().weak());
             return;
@@ -670,8 +864,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.checkbox(&mut img.visible, "Visible");
             ui.checkbox(&mut img.locked, "Lock");
-            ui.checkbox(&mut self.image_drag_enabled, "Drag mode")
-                .on_hover_text("When ON, left-drag on image moves the image (instead of panning).");
+            ui.checkbox(&mut self.image_drag_enabled, "Drag mode");
         });
         ui.horizontal(|ui| {
             ui.label("Opacity:");
@@ -702,19 +895,109 @@ impl App {
         });
     }
 
-    fn points_section(&mut self, ui: &mut egui::Ui) {
+    fn shape_editor_section(&mut self, ui: &mut egui::Ui) {
         if self.curves.is_empty() {
             return;
         }
         let sel = self.selected.min(self.curves.len() - 1);
+        match self.curves[sel].kind {
+            CurveKind::Bezier => self.bezier_points_section(ui, sel),
+            CurveKind::Ellipse => self.ellipse_params_section(ui, sel),
+        }
+    }
+
+    fn ellipse_params_section(&mut self, ui: &mut egui::Ui, sel: usize) {
+        ui.heading("Ellipse parameters");
+        let c = &mut self.curves[sel];
+        ui.horizontal(|ui| {
+            ui.label("Center X:");
+            ui.add(egui::DragValue::new(&mut c.ellipse_cx).speed(0.02).fixed_decimals(3));
+            ui.label("Y:");
+            ui.add(egui::DragValue::new(&mut c.ellipse_cy).speed(0.02).fixed_decimals(3));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Radius X:");
+            ui.add(
+                egui::DragValue::new(&mut c.ellipse_rx)
+                    .speed(0.02)
+                    .range(0.001..=10000.0)
+                    .fixed_decimals(3),
+            );
+            ui.label("Y:");
+            ui.add(
+                egui::DragValue::new(&mut c.ellipse_ry)
+                    .speed(0.02)
+                    .range(0.001..=10000.0)
+                    .fixed_decimals(3),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Rotation:");
+            ui.add(
+                egui::DragValue::new(&mut c.ellipse_rot_deg)
+                    .speed(0.5)
+                    .suffix("°"),
+            );
+            if ui.small_button("Make circle").clicked() {
+                let r = (c.ellipse_rx + c.ellipse_ry) * 0.5;
+                c.ellipse_rx = r;
+                c.ellipse_ry = r;
+            }
+        });
+        ui.label(
+            egui::RichText::new("Drag center on canvas to move, rx/ry handles to resize+rotate.")
+                .small()
+                .weak(),
+        );
+    }
+
+    fn bezier_points_section(&mut self, ui: &mut egui::Ui, sel: usize) {
         ui.heading("Points");
+        let c = &self.curves[sel];
         ui.label(format!(
             "n = {} (|S1|={}, |S2|={}, |S3|={})",
-            self.curves[sel].n(),
-            self.curves[sel].s1.len(),
-            self.curves[sel].s2.len(),
-            self.curves[sel].s3.len(),
+            c.n(),
+            c.s1.len(),
+            c.s2.len(),
+            c.s3.len(),
         ));
+
+        let n = c.n();
+        if n > 0 {
+            let active = c.active_segment.min(n - 1);
+            ui.horizontal(|ui| {
+                ui.label("Active segment:");
+                if ui
+                    .add_enabled(active > 0, egui::Button::new("◀"))
+                    .clicked()
+                {
+                    self.curves[sel].active_segment = active.saturating_sub(1);
+                }
+                ui.label(
+                    egui::RichText::new(format!("{} / {}", active + 1, n))
+                        .monospace()
+                        .strong(),
+                );
+                if ui
+                    .add_enabled(active + 1 < n, egui::Button::new("▶"))
+                    .clicked()
+                {
+                    self.curves[sel].active_segment = active + 1;
+                }
+                ui.separator();
+                if ui.small_button("First").clicked() {
+                    self.curves[sel].active_segment = 0;
+                }
+                if ui.small_button("Last").clicked() {
+                    self.curves[sel].active_segment = n - 1;
+                }
+            });
+            ui.label(
+                egui::RichText::new("Only handles of the active segment can be dragged on canvas.")
+                    .small()
+                    .weak(),
+            );
+        }
 
         ui.horizontal(|ui| {
             if ui
@@ -722,9 +1005,7 @@ impl App {
                     egui::Button::new(egui::RichText::new("+ Add segment").strong().size(14.0))
                         .min_size(egui::vec2(140.0, 0.0)),
                 )
-                .on_hover_text(
-                    "Tambah 1 titik ke S1, S2, S3 sekaligus (siklis default: new S1 = last S3).\nShortcut: Enter",
-                )
+                .on_hover_text("Append 1 segment (3 points across S1/S2/S3).\nShortcut: Enter")
                 .clicked()
             {
                 self.curves[sel].append_segment();
@@ -750,7 +1031,6 @@ impl App {
         let mut insert_after: Option<usize> = None;
         let mut do_auto_merge = false;
         let len = self.curves[ci].get(a).len();
-
         let s1_first = self.curves[ci].s1.first().copied();
 
         for i in 0..len {
@@ -855,13 +1135,36 @@ impl App {
             self.center_y += d.y / self.scale;
         }
 
-        if response.drag_started_by(egui::PointerButton::Primary) {
+        let picking = self.color_pick_target.is_some();
+        let mut consumed_by_pick = false;
+        if picking {
+            if response.clicked() || response.drag_started_by(egui::PointerButton::Primary) {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let w = self.s2w(rect, pos);
+                    if let Some(img) = &self.reference_image {
+                        if let Some(rgba) = img.sample_at_world(w.x, w.y) {
+                            if let Some(target) = self.color_pick_target.take() {
+                                self.apply_picked_color(target, rgba);
+                            }
+                        } else {
+                            self.color_pick_target = None;
+                        }
+                    } else {
+                        self.color_pick_target = None;
+                    }
+                }
+                consumed_by_pick = true;
+            }
+        }
+
+        if !consumed_by_pick && response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = response.interact_pointer_pos() {
                 let mut started = false;
                 if self.image_drag_enabled {
                     if let Some(img) = &self.reference_image {
                         if img.visible && !img.locked && self.image_hit(rect, pos) {
-                            let img_screen_pos = self.w2s(rect, P::new(img.world_x, img.world_y));
+                            let img_screen_pos =
+                                self.w2s(rect, P::new(img.world_x, img.world_y));
                             self.drag_image_offset = pos - img_screen_pos;
                             self.dragging_image = true;
                             started = true;
@@ -887,14 +1190,10 @@ impl App {
                         img.world_y = top_left_world.y - img.world_h;
                     }
                 }
-            } else if let Some((ci, a, pi)) = self.dragging_handle {
+            } else if self.dragging_handle.is_some() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let w = self.s2w(rect, pos);
-                    let arr = self.curves[ci].get_mut(a);
-                    if pi < arr.len() {
-                        arr[pi] = w;
-                        self.apply_continuity_after_drag(ci, a, pi);
-                    }
+                    self.update_dragged_handle(w);
                 }
             } else if self.panning {
                 let d = response.drag_delta();
@@ -912,60 +1211,7 @@ impl App {
             if !c.visible {
                 continue;
             }
-            let n = c.n();
-            if n == 0 {
-                continue;
-            }
-
-            let pl_world = c.sampled_path(self.samples_per_segment.max(4));
-            let pl: Vec<Pos2> = pl_world.iter().map(|p| self.w2s(rect, *p)).collect();
-
-            if c.fill_enabled && pl.len() >= 3 {
-                let fill_color = Color32::from_rgba_unmultiplied(
-                    c.fill_color[0],
-                    c.fill_color[1],
-                    c.fill_color[2],
-                    c.fill_color[3],
-                );
-                let path_shape = egui::epaint::PathShape {
-                    points: pl.clone(),
-                    closed: true,
-                    fill: fill_color,
-                    stroke: egui::Stroke::NONE.into(),
-                };
-                painter.add(egui::Shape::Path(path_shape));
-            }
-
-            if c.stroke_visible {
-                let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
-                let stroke = Stroke::new(c.thickness, color);
-                let pattern_base = c.line_style.pattern();
-                if pattern_base.is_empty() {
-                    painter.add(egui::Shape::line(pl.clone(), stroke));
-                } else {
-                    let pattern: Vec<f32> =
-                        pattern_base.iter().map(|v| v * c.thickness.max(0.5)).collect();
-                    for dash in arc_length_dashes(&pl, &pattern) {
-                        if dash.len() >= 2 {
-                            painter.add(egui::Shape::line(dash, stroke));
-                        }
-                    }
-                }
-            }
-
-            if c.show_control_poly {
-                let cp_color =
-                    Color32::from_rgba_unmultiplied(c.color[0], c.color[1], c.color[2], 140);
-                let cp_stroke = Stroke::new(c.control_poly_thickness, cp_color);
-                for i in 0..n {
-                    let cp = vec![
-                        self.w2s(rect, c.s1[i]),
-                        self.w2s(rect, c.s2[i]),
-                        self.w2s(rect, c.s3[i]),
-                    ];
-                    painter.add(egui::Shape::line(cp, cp_stroke));
-                }
-            }
+            self.draw_curve(&painter, rect, c);
         }
 
         if self.show_handles_all {
@@ -974,50 +1220,43 @@ impl App {
                     continue;
                 }
                 let is_sel = ci == self.selected;
-                let n = c.n();
-                let active = if n > 0 { c.active_segment.min(n - 1) } else { 0 };
-                let base = c.color;
-                for a in Arr::all() {
-                    for (pi, p) in c.get(a).iter().enumerate() {
-                        let sp = self.w2s(rect, *p);
-                        let is_drag = self.dragging_handle == Some((ci, a, pi));
-                        let is_active = is_sel && pi == active;
-
-                        let base_r = match a {
-                            Arr::S1 | Arr::S3 => 5.0,
-                            Arr::S2 => 4.0,
-                        };
-                        let r = if is_active { base_r } else { base_r * 0.65 };
-
-                        let alpha: u8 = if is_active { 255 } else { 70 };
-                        let color = Color32::from_rgba_unmultiplied(
-                            base[0], base[1], base[2], alpha,
-                        );
-                        let fill = if matches!(a, Arr::S2) {
-                            Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
-                        } else {
-                            color
-                        };
-                        let stroke = Stroke::new(if is_drag { 2.5 } else { 1.5 }, color);
-                        painter.circle(sp, r, fill, stroke);
-                    }
-                }
+                self.draw_handles(&painter, rect, ci, c, is_sel);
             }
         }
 
         if let Some(pos) = response.hover_pos() {
             let w = self.s2w(rect, pos);
+            let mut text = format!("({:.3}, {:.3})  scale={:.1} px/u", w.x, w.y, self.scale);
+            if picking {
+                if let Some(img) = &self.reference_image {
+                    if let Some(rgba) = img.sample_at_world(w.x, w.y) {
+                        text.push_str(&format!(
+                            "   pick: #{:02x}{:02x}{:02x}",
+                            rgba[0], rgba[1], rgba[2]
+                        ));
+                        let swatch = Color32::from_rgb(rgba[0], rgba[1], rgba[2]);
+                        let r = Rect::from_min_size(
+                            rect.left_top() + Vec2::new(8.0, 24.0),
+                            egui::vec2(18.0, 14.0),
+                        );
+                        painter.rect_filled(r, 2.0, swatch);
+                        painter.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::BLACK));
+                    }
+                }
+            }
             painter.text(
                 rect.left_top() + Vec2::new(8.0, 6.0),
                 egui::Align2::LEFT_TOP,
-                format!("({:.3}, {:.3})  scale={:.1} px/u", w.x, w.y, self.scale),
+                text,
                 egui::FontId::monospace(12.0),
-                Color32::from_gray(90),
+                Color32::from_gray(60),
             );
         }
 
-        let hint = if self.image_drag_enabled {
-            "image drag ON • drag handle = move pt • right/middle = pan • scroll = zoom • Enter = add segment • Ctrl+Z undo"
+        let hint = if picking {
+            "color-pick mode • click on the reference image to sample • Esc to cancel"
+        } else if self.image_drag_enabled {
+            "image drag ON • drag handle = move • right/middle = pan • scroll = zoom • Enter = add segment • Ctrl+Z undo"
         } else {
             "drag handle = move • right/middle = pan • scroll = zoom • Enter = add segment • Ctrl+Z undo"
         };
@@ -1028,6 +1267,149 @@ impl App {
             egui::FontId::proportional(11.0),
             Color32::from_gray(140),
         );
+    }
+
+    fn draw_curve(&self, painter: &egui::Painter, rect: Rect, c: &CurveSet) {
+        let stroke_samples = self.samples_per_segment.max(4);
+        let fill_samples = stroke_samples.max(64);
+
+        let stroke_world = c.sampled_path(stroke_samples);
+        let stroke_pts: Vec<Pos2> = stroke_world.iter().map(|p| self.w2s(rect, *p)).collect();
+
+        if c.fill_enabled {
+            let fill_world = if fill_samples == stroke_samples {
+                stroke_world.clone()
+            } else {
+                c.sampled_path(fill_samples)
+            };
+            let fill_pts: Vec<Pos2> = fill_world.iter().map(|p| self.w2s(rect, *p)).collect();
+            if fill_pts.len() >= 3 {
+                let fill_color = Color32::from_rgba_unmultiplied(
+                    c.fill_color[0],
+                    c.fill_color[1],
+                    c.fill_color[2],
+                    c.fill_color[3],
+                );
+                draw_filled_polygon(painter, &fill_pts, fill_color);
+            }
+        }
+
+        if c.stroke_visible && stroke_pts.len() >= 2 {
+            let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
+            let stroke = Stroke::new(c.thickness, color);
+            let pattern_base = c.line_style.pattern();
+            if pattern_base.is_empty() {
+                painter.add(egui::Shape::line(stroke_pts.clone(), stroke));
+            } else {
+                let pattern: Vec<f32> = pattern_base
+                    .iter()
+                    .map(|v| v * c.thickness.max(0.5))
+                    .collect();
+                for dash in arc_length_dashes(&stroke_pts, &pattern) {
+                    if dash.len() >= 2 {
+                        painter.add(egui::Shape::line(dash, stroke));
+                    }
+                }
+            }
+        }
+
+        if c.is_bezier() && c.show_control_poly {
+            let cp_color =
+                Color32::from_rgba_unmultiplied(c.color[0], c.color[1], c.color[2], 140);
+            let cp_stroke = Stroke::new(c.control_poly_thickness, cp_color);
+            let n = c.n();
+            for i in 0..n {
+                let cp = vec![
+                    self.w2s(rect, c.s1[i]),
+                    self.w2s(rect, c.s2[i]),
+                    self.w2s(rect, c.s3[i]),
+                ];
+                painter.add(egui::Shape::line(cp, cp_stroke));
+            }
+        }
+    }
+
+    fn draw_handles(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        ci: usize,
+        c: &CurveSet,
+        is_sel: bool,
+    ) {
+        let base = c.color;
+        match c.kind {
+            CurveKind::Bezier => {
+                let n = c.n();
+                let active = if n > 0 { c.active_segment.min(n - 1) } else { 0 };
+                for a in Arr::all() {
+                    for (pi, p) in c.get(a).iter().enumerate() {
+                        let sp = self.w2s(rect, *p);
+                        let is_drag = self.dragging_handle == Some(HandleId::Bezier(ci, a, pi));
+                        let is_active = is_sel && pi == active;
+                        let base_r = match a {
+                            Arr::S1 | Arr::S3 => 5.0,
+                            Arr::S2 => 4.0,
+                        };
+                        let r = if is_active { base_r } else { base_r * 0.65 };
+                        let alpha: u8 = if is_active { 255 } else { 70 };
+                        let color =
+                            Color32::from_rgba_unmultiplied(base[0], base[1], base[2], alpha);
+                        let fill = if matches!(a, Arr::S2) {
+                            Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
+                        } else {
+                            color
+                        };
+                        let stroke = Stroke::new(if is_drag { 2.5 } else { 1.5 }, color);
+                        painter.circle(sp, r, fill, stroke);
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                let alpha: u8 = if is_sel { 255 } else { 90 };
+                let color = Color32::from_rgba_unmultiplied(base[0], base[1], base[2], alpha);
+                let white = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
+                let center = P::new(c.ellipse_cx, c.ellipse_cy);
+                let rx_end = Self::ellipse_rx_endpoint(c);
+                let ry_end = Self::ellipse_ry_endpoint(c);
+
+                let sp_center = self.w2s(rect, center);
+                let sp_rx = self.w2s(rect, rx_end);
+                let sp_ry = self.w2s(rect, ry_end);
+
+                painter.line_segment(
+                    [sp_center, sp_rx],
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(base[0], base[1], base[2], 70)),
+                );
+                painter.line_segment(
+                    [sp_center, sp_ry],
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(base[0], base[1], base[2], 70)),
+                );
+
+                let is_center_drag =
+                    self.dragging_handle == Some(HandleId::EllipseCenter(ci));
+                let is_rx_drag = self.dragging_handle == Some(HandleId::EllipseRx(ci));
+                let is_ry_drag = self.dragging_handle == Some(HandleId::EllipseRy(ci));
+                painter.circle(
+                    sp_center,
+                    if is_sel { 6.0 } else { 4.0 },
+                    color,
+                    Stroke::new(if is_center_drag { 2.5 } else { 1.5 }, color),
+                );
+                painter.circle(
+                    sp_rx,
+                    if is_sel { 5.0 } else { 3.5 },
+                    white,
+                    Stroke::new(if is_rx_drag { 2.5 } else { 1.5 }, color),
+                );
+                painter.circle(
+                    sp_ry,
+                    if is_sel { 5.0 } else { 3.5 },
+                    white,
+                    Stroke::new(if is_ry_drag { 2.5 } else { 1.5 }, color),
+                );
+            }
+        }
     }
 
     fn image_hit(&self, rect: Rect, screen_pos: Pos2) -> bool {
@@ -1165,6 +1547,63 @@ impl App {
             Stroke::new(1.5, axis_color),
         );
     }
+}
+
+fn pick_color_button_widget(
+    ui: &mut egui::Ui,
+    target: ColorPickTarget,
+    current_target: &mut Option<ColorPickTarget>,
+    img_ready: bool,
+) {
+    let active = *current_target == Some(target);
+    let label = if active { "🎨..." } else { "🎨" };
+    let btn = ui.add_enabled(
+        img_ready,
+        egui::Button::new(label).small().fill(if active {
+            Color32::from_rgb(255, 220, 100)
+        } else {
+            Color32::TRANSPARENT
+        }),
+    );
+    let btn = btn.on_hover_text(if img_ready {
+        "Pick this color from the reference image (click image after)"
+    } else {
+        "Load a reference image first to enable color picking"
+    });
+    if btn.clicked() {
+        *current_target = if active { None } else { Some(target) };
+    }
+}
+
+fn draw_filled_polygon(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
+    if pts.len() < 3 {
+        return;
+    }
+    let flat: Vec<f64> = pts
+        .iter()
+        .flat_map(|p| [p.x as f64, p.y as f64])
+        .collect();
+    let Ok(indices) = earcutr::earcut(&flat, &[], 2) else {
+        painter.add(egui::Shape::Path(egui::epaint::PathShape {
+            points: pts.to_vec(),
+            closed: true,
+            fill: color,
+            stroke: egui::Stroke::NONE.into(),
+        }));
+        return;
+    };
+    let mut mesh = egui::epaint::Mesh::default();
+    for p in pts {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: *p,
+            uv: egui::epaint::WHITE_UV,
+            color,
+        });
+    }
+    for i in &indices {
+        mesh.indices.push(*i as u32);
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn arc_length_dashes(pts: &[Pos2], pattern: &[f32]) -> Vec<Vec<Pos2>> {

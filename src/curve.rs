@@ -71,6 +71,30 @@ impl LineStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CurveKind {
+    Bezier,
+    Ellipse,
+}
+
+impl Default for CurveKind {
+    fn default() -> Self {
+        CurveKind::Bezier
+    }
+}
+
+impl CurveKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            CurveKind::Bezier => "Bézier (quadratic)",
+            CurveKind::Ellipse => "Ellipse / circle",
+        }
+    }
+    pub fn all() -> [CurveKind; 2] {
+        [CurveKind::Bezier, CurveKind::Ellipse]
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -86,13 +110,31 @@ fn default_fill_color() -> [u8; 4] {
 fn default_line_style() -> LineStyle {
     LineStyle::Solid
 }
+fn default_radius() -> f32 {
+    1.0
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurveSet {
     pub name: String,
+    #[serde(default)]
+    pub kind: CurveKind,
+
     pub s1: Vec<P>,
     pub s2: Vec<P>,
     pub s3: Vec<P>,
+
+    #[serde(default)]
+    pub ellipse_cx: f32,
+    #[serde(default)]
+    pub ellipse_cy: f32,
+    #[serde(default = "default_radius")]
+    pub ellipse_rx: f32,
+    #[serde(default = "default_radius")]
+    pub ellipse_ry: f32,
+    #[serde(default)]
+    pub ellipse_rot_deg: f32,
+
     pub color: [u8; 3],
     #[serde(default = "default_true")]
     pub visible: bool,
@@ -120,9 +162,15 @@ impl CurveSet {
     pub fn empty(name: impl Into<String>, color: [u8; 3]) -> Self {
         Self {
             name: name.into(),
+            kind: CurveKind::Bezier,
             s1: Vec::new(),
             s2: Vec::new(),
             s3: Vec::new(),
+            ellipse_cx: 0.0,
+            ellipse_cy: 0.0,
+            ellipse_rx: 1.0,
+            ellipse_ry: 1.0,
+            ellipse_rot_deg: 0.0,
             color,
             visible: true,
             show_handles: true,
@@ -135,6 +183,22 @@ impl CurveSet {
             fill_color: [color[0], color[1], color[2], 60],
             active_segment: 0,
         }
+    }
+
+    pub fn new_ellipse(name: impl Into<String>, color: [u8; 3], cx: f32, cy: f32) -> Self {
+        let mut c = Self::empty(name, color);
+        c.kind = CurveKind::Ellipse;
+        c.ellipse_cx = cx;
+        c.ellipse_cy = cy;
+        c
+    }
+
+    pub fn is_bezier(&self) -> bool {
+        matches!(self.kind, CurveKind::Bezier)
+    }
+    #[allow(dead_code)]
+    pub fn is_ellipse(&self) -> bool {
+        matches!(self.kind, CurveKind::Ellipse)
     }
 
     pub fn n(&self) -> usize {
@@ -165,6 +229,19 @@ impl CurveSet {
         P::new(
             u * u * p0.x + 2.0 * u * j * p1.x + j * j * p2.x,
             u * u * p0.y + 2.0 * u * j * p1.y + j * j * p2.y,
+        )
+    }
+
+    pub fn eval_ellipse(&self, t: f32) -> P {
+        let theta = t * std::f32::consts::TAU;
+        let (sin_t, cos_t) = theta.sin_cos();
+        let lx = self.ellipse_rx * cos_t;
+        let ly = self.ellipse_ry * sin_t;
+        let r = self.ellipse_rot_deg.to_radians();
+        let (sin_r, cos_r) = r.sin_cos();
+        P::new(
+            self.ellipse_cx + lx * cos_r - ly * sin_r,
+            self.ellipse_cy + lx * sin_r + ly * cos_r,
         )
     }
 
@@ -228,20 +305,39 @@ impl CurveSet {
     }
 
     pub fn sampled_path(&self, samples_per_segment: usize) -> Vec<P> {
-        let n = self.n();
-        let mut pts = Vec::with_capacity(n * samples_per_segment + 1);
-        if n == 0 {
-            return pts;
+        match self.kind {
+            CurveKind::Bezier => self.sampled_bezier(samples_per_segment),
+            CurveKind::Ellipse => self.sampled_ellipse(samples_per_segment),
         }
+    }
+
+    fn sampled_bezier(&self, samples_per_segment: usize) -> Vec<P> {
+        let n = self.n();
+        if n == 0 {
+            return Vec::new();
+        }
+        let spp = samples_per_segment.max(2);
+        let mut pts = Vec::with_capacity(n * spp + 1);
         for i in 0..n {
-            for k in 0..samples_per_segment {
-                let j = k as f32 / samples_per_segment as f32;
+            let start_k = if i == 0 { 0 } else { 1 };
+            for k in start_k..=spp {
+                let j = k as f32 / spp as f32;
                 pts.push(self.eval_segment(i, j));
             }
         }
-        pts.push(self.eval_segment(n - 1, 1.0));
         pts
     }
+
+    fn sampled_ellipse(&self, samples_per_segment: usize) -> Vec<P> {
+        let n_samples = samples_per_segment.max(16) * 4;
+        let mut pts = Vec::with_capacity(n_samples + 1);
+        for k in 0..=n_samples {
+            let t = k as f32 / n_samples as f32;
+            pts.push(self.eval_ellipse(t));
+        }
+        pts
+    }
+
 }
 
 pub const PALETTE: &[[u8; 3]] = &[
@@ -279,6 +375,27 @@ mod tests {
         let s3_first = c.s3[0];
         c.append_segment();
         assert_eq!(c.s1[1], s3_first);
+    }
+
+    #[test]
+    fn ellipse_eval_at_zero_is_right_vertex() {
+        let mut c = CurveSet::new_ellipse("e", [0, 0, 0], 5.0, 3.0);
+        c.ellipse_rx = 2.0;
+        c.ellipse_ry = 1.0;
+        c.ellipse_rot_deg = 0.0;
+        let p = c.eval_ellipse(0.0);
+        assert!((p.x - 7.0).abs() < 1e-5);
+        assert!((p.y - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn ellipse_eval_at_quarter_is_top_vertex() {
+        let mut c = CurveSet::new_ellipse("e", [0, 0, 0], 0.0, 0.0);
+        c.ellipse_rx = 2.0;
+        c.ellipse_ry = 3.0;
+        let p = c.eval_ellipse(0.25);
+        assert!(p.x.abs() < 1e-4);
+        assert!((p.y - 3.0).abs() < 1e-4);
     }
 
     #[test]

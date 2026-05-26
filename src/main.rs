@@ -3,6 +3,7 @@ mod curve;
 mod export;
 mod image_ref;
 mod persist;
+mod svg_export;
 
 use app::App;
 
