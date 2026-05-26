@@ -365,6 +365,18 @@ impl App {
         self.last_committed_curves = self.curves.clone();
     }
 
+    pub(crate) fn save_current(&mut self) {
+        let Some(path) = self.current_project_path.clone() else {
+            self.save_dialog();
+            return;
+        };
+        let proj = self.make_project();
+        self.last_msg = Some(match proj.save_to(&path) {
+            Ok(()) => format!("Saved project → {}", path.display()),
+            Err(e) => format!("Save error: {e}"),
+        });
+    }
+
     pub(crate) fn save_dialog(&mut self) {
         let initial = self
             .current_project_path
@@ -495,6 +507,12 @@ impl eframe::App for App {
                 egui::Key::Z,
             ))
         });
+        let save = ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::S,
+            ))
+        });
         let enter =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         let escape =
@@ -508,6 +526,9 @@ impl eframe::App for App {
         }
         if redo {
             self.redo();
+        }
+        if save {
+            self.save_current();
         }
         if enter && self.color_pick_target.is_none() && !self.curves.is_empty() {
             let sel = self.selected.min(self.curves.len() - 1);
