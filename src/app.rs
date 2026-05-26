@@ -1,7 +1,17 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use egui::{Pos2, Rect, Vec2};
+
+pub(crate) const PROJECT_DIR: &str = "./project";
+pub(crate) const PNG_EXPORT_DIR: &str = "./export/png";
+pub(crate) const SVG_EXPORT_DIR: &str = "./export/svg";
+
+fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
+    let pb = p.as_ref().to_path_buf();
+    let _ = std::fs::create_dir_all(&pb);
+    pb
+}
 
 use crate::curve::{Arr, CurveSet, P, PALETTE};
 use crate::image_ref::ReferenceImage;
@@ -96,12 +106,12 @@ impl App {
             pending_fit_view: false,
             color_pick_target: None,
             last_picked_color: None,
-            export_path: "output.png".into(),
+            export_path: format!("{}/output.png", PNG_EXPORT_DIR),
             export_w: 1024,
             export_h: 1024,
             export_transparent: false,
             export_samples: 64,
-            svg_export_path: "output.svg".into(),
+            svg_export_path: format!("{}/output.svg", SVG_EXPORT_DIR),
             last_msg: None,
             new_curve_name: String::new(),
             new_curve_kind: crate::curve::CurveKind::Bezier,
@@ -502,7 +512,7 @@ impl App {
         let initial = self
             .current_project_path
             .clone()
-            .unwrap_or_else(|| PathBuf::from("project.json"));
+            .unwrap_or_else(|| ensure_dir(PROJECT_DIR).join("project.json"));
         let mut dlg = rfd::FileDialog::new().add_filter("project", &["json"]);
         if let Some(name) = initial.file_name().and_then(|s| s.to_str()) {
             dlg = dlg.set_file_name(name);
@@ -526,13 +536,14 @@ impl App {
 
     pub(crate) fn load_dialog(&mut self) {
         let mut dlg = rfd::FileDialog::new().add_filter("project", &["json"]);
-        if let Some(p) = &self.current_project_path {
-            if let Some(dir) = p.parent() {
-                if dir.as_os_str().len() > 0 {
-                    dlg = dlg.set_directory(dir);
-                }
-            }
-        }
+        let default_dir = self
+            .current_project_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| ensure_dir(PROJECT_DIR));
+        dlg = dlg.set_directory(&default_dir);
         if let Some(path) = dlg.pick_file() {
             match Project::load_from(&path) {
                 Ok(proj) => {

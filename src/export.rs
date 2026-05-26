@@ -52,6 +52,11 @@ pub fn export_png(curves: &[CurveSet], cfg: &ExportConfig) -> Result<(), String>
         }
     }
 
+    if let Some(parent) = cfg.path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+        }
+    }
     pixmap
         .save_png(cfg.path)
         .map_err(|e| format!("Save error: {e}"))?;

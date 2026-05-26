@@ -56,6 +56,11 @@ pub fn export_svg(curves: &[CurveSet], cfg: &SvgConfig) -> Result<(), String> {
     }
 
     svg.push_str("</svg>\n");
+    if let Some(parent) = cfg.path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+        }
+    }
     std::fs::write(cfg.path, svg).map_err(|e| format!("Write failed: {e}"))?;
     Ok(())
 }
