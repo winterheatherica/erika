@@ -236,11 +236,13 @@ impl App {
     fn draw_curve(&self, painter: &egui::Painter, rect: Rect, c: &CurveSet) {
         let stroke_samples = self.samples_per_segment.max(4);
         let fill_samples = stroke_samples.max(64);
+        let eff_stroke = self.render_mode.effective_stroke(c.stroke_visible);
+        let eff_fill = self.render_mode.effective_fill(c.fill_enabled);
 
         let stroke_world = c.sampled_path(stroke_samples);
         let stroke_pts: Vec<Pos2> = stroke_world.iter().map(|p| self.w2s(rect, *p)).collect();
 
-        if c.fill_enabled {
+        if eff_fill {
             let fill_world = if fill_samples == stroke_samples {
                 stroke_world.clone()
             } else {
@@ -258,7 +260,7 @@ impl App {
             }
         }
 
-        if c.stroke_visible && stroke_pts.len() >= 2 {
+        if eff_stroke && stroke_pts.len() >= 2 {
             let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
             let stroke = Stroke::new(c.thickness, color);
             let pattern_base = c.line_style.pattern();
@@ -301,10 +303,12 @@ impl App {
         partial: f32,
     ) {
         let stroke_samples = self.samples_per_segment.max(4);
+        let eff_stroke = self.render_mode.effective_stroke(c.stroke_visible);
+        let eff_fill = self.render_mode.effective_fill(c.fill_enabled);
         let stroke_world = c.sampled_path_partial(stroke_samples, partial);
         let stroke_pts: Vec<Pos2> = stroke_world.iter().map(|p| self.w2s(rect, *p)).collect();
 
-        if c.fill_enabled {
+        if eff_fill {
             let fill_samples = stroke_samples.max(64);
             let fill_world = if fill_samples == stroke_samples {
                 stroke_world.clone()
@@ -323,7 +327,7 @@ impl App {
             }
         }
 
-        if c.stroke_visible && stroke_pts.len() >= 2 {
+        if eff_stroke && stroke_pts.len() >= 2 {
             let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
             let stroke = Stroke::new(c.thickness, color);
             painter.add(egui::Shape::line(stroke_pts, stroke));

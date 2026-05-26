@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::Color32;
 
-use crate::app::{App, ColorPickTarget};
+use crate::app::{App, ColorPickTarget, RenderMode};
 use crate::curve::{Arr, CurveKind, CurveSet, LineStyle, P, PALETTE};
 use crate::ui_topbar::pick_color_button_widget;
 
@@ -73,6 +73,21 @@ impl App {
                     .suffix(" s"),
             );
         });
+
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Render mode (overrides per-curve stroke/fill toggles):")
+                .small()
+                .weak(),
+        );
+        for mode in [
+            RenderMode::Real,
+            RenderMode::StrokeOnly,
+            RenderMode::FillOnly,
+            RenderMode::Both,
+        ] {
+            ui.radio_value(&mut self.render_mode, mode, mode.label());
+        }
     }
 
     fn curves_section(&mut self, ui: &mut egui::Ui) {

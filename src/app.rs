@@ -32,6 +32,40 @@ pub(crate) enum ColorPickTarget {
     Background,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RenderMode {
+    Real,
+    StrokeOnly,
+    FillOnly,
+    Both,
+}
+
+impl RenderMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            RenderMode::Real => "Normal",
+            RenderMode::StrokeOnly => "Outline",
+            RenderMode::FillOnly => "Fill",
+            RenderMode::Both => "Outline + fill",
+        }
+    }
+
+    pub(crate) fn effective_stroke(self, curve_stroke: bool) -> bool {
+        match self {
+            RenderMode::Real => curve_stroke,
+            RenderMode::StrokeOnly | RenderMode::Both => true,
+            RenderMode::FillOnly => false,
+        }
+    }
+
+    pub(crate) fn effective_fill(self, curve_fill: bool) -> bool {
+        match self {
+            RenderMode::Real | RenderMode::FillOnly | RenderMode::Both => curve_fill,
+            RenderMode::StrokeOnly => false,
+        }
+    }
+}
+
 pub struct App {
     pub(crate) curves: Vec<CurveSet>,
     pub(crate) selected: usize,
@@ -82,6 +116,8 @@ pub struct App {
     pub(crate) playback_last_tick: Option<std::time::Instant>,
 
     pub(crate) next_created: u64,
+
+    pub(crate) render_mode: RenderMode,
 }
 
 impl App {
@@ -127,6 +163,7 @@ impl App {
             playback_loop: false,
             playback_last_tick: None,
             next_created: 0,
+            render_mode: RenderMode::Real,
         }
     }
 
