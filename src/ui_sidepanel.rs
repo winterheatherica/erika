@@ -54,6 +54,16 @@ impl App {
 
         let mut to_delete: Option<usize> = None;
         let mut select: Option<usize> = None;
+        let mut to_forward: Option<usize> = None;
+        let mut to_backward: Option<usize> = None;
+        let mut to_front: Option<usize> = None;
+        let mut to_back: Option<usize> = None;
+        let total = self.curves.len();
+        ui.label(
+            egui::RichText::new("Layer order: top of list = behind, bottom = in front")
+                .small()
+                .weak(),
+        );
         for (i, c) in self.curves.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 let _ = ui.color_edit_button_srgb(&mut c.color);
@@ -66,6 +76,34 @@ impl App {
                 if ui.selectable_label(self.selected == i, label).clicked() {
                     select = Some(i);
                 }
+                if ui
+                    .add_enabled(i + 1 < total, egui::Button::new("▲").small())
+                    .on_hover_text("Bring forward (draw on top of next)")
+                    .clicked()
+                {
+                    to_forward = Some(i);
+                }
+                if ui
+                    .add_enabled(i > 0, egui::Button::new("▼").small())
+                    .on_hover_text("Send backward (draw behind previous)")
+                    .clicked()
+                {
+                    to_backward = Some(i);
+                }
+                if ui
+                    .add_enabled(i + 1 < total, egui::Button::new("⏫").small())
+                    .on_hover_text("Bring to front (draw on top of everything)")
+                    .clicked()
+                {
+                    to_front = Some(i);
+                }
+                if ui
+                    .add_enabled(i > 0, egui::Button::new("⏬").small())
+                    .on_hover_text("Send to back (draw behind everything)")
+                    .clicked()
+                {
+                    to_back = Some(i);
+                }
                 if ui.small_button("🗑").clicked() {
                     to_delete = Some(i);
                 }
@@ -73,6 +111,18 @@ impl App {
         }
         if let Some(i) = select {
             self.selected = i;
+        }
+        if let Some(i) = to_forward {
+            self.move_curve_forward(i);
+        }
+        if let Some(i) = to_backward {
+            self.move_curve_backward(i);
+        }
+        if let Some(i) = to_front {
+            self.move_curve_to_front(i);
+        }
+        if let Some(i) = to_back {
+            self.move_curve_to_back(i);
         }
         if let Some(i) = to_delete {
             if self.curves.len() > 1 {

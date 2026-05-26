@@ -365,6 +365,57 @@ impl App {
         self.last_committed_curves = self.curves.clone();
     }
 
+    pub(crate) fn move_curve_forward(&mut self, i: usize) {
+        if i + 1 < self.curves.len() {
+            self.curves.swap(i, i + 1);
+            self.remap_selected_after_swap(i, i + 1);
+        }
+    }
+
+    pub(crate) fn move_curve_backward(&mut self, i: usize) {
+        if i > 0 {
+            self.curves.swap(i, i - 1);
+            self.remap_selected_after_swap(i, i - 1);
+        }
+    }
+
+    pub(crate) fn move_curve_to_front(&mut self, i: usize) {
+        let last = self.curves.len().saturating_sub(1);
+        if i >= last {
+            return;
+        }
+        let c = self.curves.remove(i);
+        self.curves.push(c);
+        self.remap_selected_after_move(i, last);
+    }
+
+    pub(crate) fn move_curve_to_back(&mut self, i: usize) {
+        if i == 0 || i >= self.curves.len() {
+            return;
+        }
+        let c = self.curves.remove(i);
+        self.curves.insert(0, c);
+        self.remap_selected_after_move(i, 0);
+    }
+
+    fn remap_selected_after_swap(&mut self, a: usize, b: usize) {
+        if self.selected == a {
+            self.selected = b;
+        } else if self.selected == b {
+            self.selected = a;
+        }
+    }
+
+    fn remap_selected_after_move(&mut self, from: usize, to: usize) {
+        if self.selected == from {
+            self.selected = to;
+        } else if from < to && self.selected > from && self.selected <= to {
+            self.selected -= 1;
+        } else if from > to && self.selected >= to && self.selected < from {
+            self.selected += 1;
+        }
+    }
+
     pub(crate) fn save_current(&mut self) {
         let Some(path) = self.current_project_path.clone() else {
             self.save_dialog();
