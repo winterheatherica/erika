@@ -12,12 +12,32 @@ impl App {
             .show(ui, |ui| {
                 self.curves_section(ui);
                 ui.separator();
+                self.edit_overrides_section(ui);
+                ui.separator();
                 self.timelapse_section(ui);
                 ui.separator();
                 self.image_section(ui);
                 ui.separator();
                 self.shape_editor_section(ui);
             });
+    }
+
+    fn edit_overrides_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Edit overrides");
+        ui.label(
+            egui::RichText::new("Applied during editing only (not during time-lapse playback).")
+                .small()
+                .weak(),
+        );
+        ui.checkbox(&mut self.edit_hide_handles, "Hide all handles");
+        ui.checkbox(
+            &mut self.edit_hide_control_polygon,
+            "Hide all control polygons",
+        );
+        ui.checkbox(&mut self.edit_show_all_strokes, "Show all strokes");
+        ui.checkbox(&mut self.edit_show_all_fills, "Show all fills");
+        ui.checkbox(&mut self.edit_hide_all_fills, "Hide all fills")
+            .on_hover_text("Wins over \"Show all fills\" if both are checked.");
     }
 
     fn timelapse_section(&mut self, ui: &mut egui::Ui) {

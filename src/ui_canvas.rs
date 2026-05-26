@@ -178,7 +178,10 @@ impl App {
             }
         }
 
-        if self.show_handles_all && self.playback_progress >= 1.0 {
+        if self.show_handles_all
+            && !self.edit_hide_handles
+            && self.playback_progress >= 1.0
+        {
             for (ci, c) in self.curves.iter().enumerate() {
                 if !c.visible || !c.show_handles {
                     continue;
@@ -236,8 +239,20 @@ impl App {
     fn draw_curve(&self, painter: &egui::Painter, rect: Rect, c: &CurveSet) {
         let stroke_samples = self.samples_per_segment.max(4);
         let fill_samples = stroke_samples.max(64);
-        let eff_stroke = self.render_mode.effective_stroke(c.stroke_visible);
-        let eff_fill = self.render_mode.effective_fill(c.fill_enabled);
+        let in_playback = self.playback_progress < 1.0;
+        let (eff_stroke, eff_fill) = if in_playback {
+            (
+                self.render_mode.effective_stroke(c.stroke_visible),
+                self.render_mode.effective_fill(c.fill_enabled),
+            )
+        } else {
+            (
+                c.stroke_visible || self.edit_show_all_strokes,
+                (c.fill_enabled || self.edit_show_all_fills) && !self.edit_hide_all_fills,
+            )
+        };
+        let show_cp = c.show_control_poly
+            && (in_playback || !self.edit_hide_control_polygon);
 
         let stroke_world = c.sampled_path(stroke_samples);
         let stroke_pts: Vec<Pos2> = stroke_world.iter().map(|p| self.w2s(rect, *p)).collect();
@@ -279,7 +294,7 @@ impl App {
             }
         }
 
-        if c.is_bezier() && c.show_control_poly {
+        if c.is_bezier() && show_cp {
             let cp_color =
                 Color32::from_rgba_unmultiplied(c.color[0], c.color[1], c.color[2], 140);
             let cp_stroke = Stroke::new(c.control_poly_thickness, cp_color);
