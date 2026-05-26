@@ -64,6 +64,12 @@ pub struct App {
     pub(crate) undo_stack: Vec<Vec<CurveSet>>,
     pub(crate) redo_stack: Vec<Vec<CurveSet>>,
     pub(crate) last_committed_curves: Vec<CurveSet>,
+
+    pub(crate) playback_active: bool,
+    pub(crate) playback_progress: f32,
+    pub(crate) playback_duration_secs: f32,
+    pub(crate) playback_loop: bool,
+    pub(crate) playback_last_tick: Option<std::time::Instant>,
 }
 
 impl App {
@@ -103,7 +109,71 @@ impl App {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_committed_curves: initial,
+            playback_active: false,
+            playback_progress: 1.0,
+            playback_duration_secs: 5.0,
+            playback_loop: false,
+            playback_last_tick: None,
         }
+    }
+
+    pub(crate) fn total_draw_units(&self) -> usize {
+        self.curves
+            .iter()
+            .filter(|c| c.visible)
+            .map(|c| c.draw_units())
+            .sum()
+    }
+
+    pub(crate) fn tick_playback(&mut self, ctx: &egui::Context) {
+        if !self.playback_active {
+            self.playback_last_tick = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some(prev) = self.playback_last_tick {
+            let dt = (now - prev).as_secs_f32();
+            if self.playback_duration_secs > 0.001 {
+                self.playback_progress += dt / self.playback_duration_secs;
+            }
+            if self.playback_progress >= 1.0 {
+                if self.playback_loop {
+                    self.playback_progress = 0.0;
+                } else {
+                    self.playback_progress = 1.0;
+                    self.playback_active = false;
+                    self.playback_last_tick = None;
+                    return;
+                }
+            }
+        }
+        self.playback_last_tick = Some(now);
+        ctx.request_repaint();
+    }
+
+    pub(crate) fn playback_play(&mut self) {
+        if self.playback_progress >= 1.0 {
+            self.playback_progress = 0.0;
+        }
+        self.playback_active = true;
+        self.playback_last_tick = None;
+    }
+
+    pub(crate) fn playback_pause(&mut self) {
+        self.playback_active = false;
+        self.playback_last_tick = None;
+    }
+
+    pub(crate) fn playback_stop(&mut self) {
+        self.playback_active = false;
+        self.playback_progress = 0.0;
+        self.playback_last_tick = None;
+    }
+
+    pub(crate) fn playback_seek_end(&mut self) {
+        self.playback_active = false;
+        self.playback_progress = 1.0;
+        self.playback_last_tick = None;
     }
 
     pub(crate) fn commit_if_changed(&mut self) {
@@ -523,6 +593,8 @@ impl eframe::App for App {
         if let Some(img) = &mut self.reference_image {
             img.ensure_loaded(ctx, 10.0);
         }
+
+        self.tick_playback(ctx);
 
         if self.pending_fit_view {
             let ready = self

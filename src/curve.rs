@@ -311,6 +311,66 @@ impl CurveSet {
         }
     }
 
+    pub fn draw_units(&self) -> usize {
+        match self.kind {
+            CurveKind::Bezier => self.n(),
+            CurveKind::Ellipse => 1,
+        }
+    }
+
+    pub fn sampled_path_partial(&self, samples_per_segment: usize, partial: f32) -> Vec<P> {
+        match self.kind {
+            CurveKind::Bezier => self.sampled_bezier_partial(samples_per_segment, partial),
+            CurveKind::Ellipse => self.sampled_ellipse_partial(samples_per_segment, partial),
+        }
+    }
+
+    fn sampled_bezier_partial(&self, samples_per_segment: usize, partial: f32) -> Vec<P> {
+        let n = self.n();
+        if n == 0 || partial <= 0.0 {
+            return Vec::new();
+        }
+        let spp = samples_per_segment.max(2);
+        let full = (partial.floor() as usize).min(n);
+        let frac = (partial - full as f32).clamp(0.0, 1.0);
+        let mut pts = Vec::new();
+
+        for i in 0..full {
+            let start_k = if i == 0 { 0 } else { 1 };
+            for k in start_k..=spp {
+                let j = k as f32 / spp as f32;
+                pts.push(self.eval_segment(i, j));
+            }
+        }
+
+        if full < n && frac > 0.0 {
+            let i = full;
+            let start_k = if pts.is_empty() { 0 } else { 1 };
+            let last_k = ((frac * spp as f32).ceil() as usize).clamp(1, spp);
+            for k in start_k..=last_k {
+                let j = (k as f32 / spp as f32).min(frac);
+                pts.push(self.eval_segment(i, j));
+            }
+        }
+
+        pts
+    }
+
+    fn sampled_ellipse_partial(&self, samples_per_segment: usize, partial: f32) -> Vec<P> {
+        let p = partial.clamp(0.0, 1.0);
+        if p <= 0.0 {
+            return Vec::new();
+        }
+        let n_samples = samples_per_segment.max(16) * 4;
+        let last = ((n_samples as f32) * p).ceil() as usize;
+        let mut pts = Vec::with_capacity(last + 2);
+        for k in 0..=last.min(n_samples) {
+            let t = (k as f32 / n_samples as f32).min(p);
+            pts.push(self.eval_ellipse(t));
+        }
+        pts
+    }
+
     fn sampled_bezier(&self, samples_per_segment: usize) -> Vec<P> {
         let n = self.n();
         if n == 0 {

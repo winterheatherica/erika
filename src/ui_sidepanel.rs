@@ -12,10 +12,67 @@ impl App {
             .show(ui, |ui| {
                 self.curves_section(ui);
                 ui.separator();
+                self.timelapse_section(ui);
+                ui.separator();
                 self.image_section(ui);
                 ui.separator();
                 self.shape_editor_section(ui);
             });
+    }
+
+    fn timelapse_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Time-lapse");
+        let total = self.total_draw_units();
+        ui.label(
+            egui::RichText::new(format!(
+                "{} units (layer order = play order, top first)",
+                total
+            ))
+            .small()
+            .weak(),
+        );
+
+        ui.horizontal(|ui| {
+            let playing = self.playback_active;
+            let play_label = if playing { "⏸ Pause" } else { "▶ Play" };
+            if ui.add_enabled(total > 0, egui::Button::new(play_label)).clicked() {
+                if playing {
+                    self.playback_pause();
+                } else {
+                    self.playback_play();
+                }
+            }
+            if ui.button("⏹ Reset").clicked() {
+                self.playback_stop();
+            }
+            if ui.button("⏭ End").clicked() {
+                self.playback_seek_end();
+            }
+            ui.checkbox(&mut self.playback_loop, "Loop");
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Progress:");
+            let resp = ui.add(
+                egui::Slider::new(&mut self.playback_progress, 0.0..=1.0)
+                    .show_value(true)
+                    .fixed_decimals(3),
+            );
+            if resp.dragged() {
+                self.playback_active = false;
+                self.playback_last_tick = None;
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Duration:");
+            ui.add(
+                egui::DragValue::new(&mut self.playback_duration_secs)
+                    .speed(0.1)
+                    .range(0.1..=120.0)
+                    .suffix(" s"),
+            );
+        });
     }
 
     fn curves_section(&mut self, ui: &mut egui::Ui) {

@@ -118,14 +118,37 @@ impl App {
             self.panning = false;
         }
 
-        for c in &self.curves {
-            if !c.visible {
-                continue;
+        let progress = self.playback_progress;
+        if progress >= 1.0 {
+            for c in &self.curves {
+                if !c.visible {
+                    continue;
+                }
+                self.draw_curve(&painter, rect, c);
             }
-            self.draw_curve(&painter, rect, c);
+        } else {
+            let total = self.total_draw_units() as f32;
+            let units_at = progress * total;
+            let mut elapsed = 0.0_f32;
+            for c in &self.curves {
+                if !c.visible {
+                    continue;
+                }
+                let count = c.draw_units();
+                if count == 0 {
+                    continue;
+                }
+                let end = elapsed + count as f32;
+                if units_at >= end {
+                    self.draw_curve(&painter, rect, c);
+                } else if units_at > elapsed {
+                    self.draw_curve_partial(&painter, rect, c, units_at - elapsed);
+                }
+                elapsed = end;
+            }
         }
 
-        if self.show_handles_all {
+        if self.show_handles_all && self.playback_progress >= 1.0 {
             for (ci, c) in self.curves.iter().enumerate() {
                 if !c.visible || !c.show_handles {
                     continue;
@@ -238,6 +261,27 @@ impl App {
                 painter.add(egui::Shape::line(cp, cp_stroke));
             }
         }
+    }
+
+    fn draw_curve_partial(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        c: &CurveSet,
+        partial: f32,
+    ) {
+        if !c.stroke_visible {
+            return;
+        }
+        let stroke_samples = self.samples_per_segment.max(4);
+        let world = c.sampled_path_partial(stroke_samples, partial);
+        if world.len() < 2 {
+            return;
+        }
+        let pts: Vec<Pos2> = world.iter().map(|p| self.w2s(rect, *p)).collect();
+        let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
+        let stroke = Stroke::new(c.thickness, color);
+        painter.add(egui::Shape::line(pts, stroke));
     }
 
     fn draw_handles(
