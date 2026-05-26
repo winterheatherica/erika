@@ -300,18 +300,34 @@ impl App {
         c: &CurveSet,
         partial: f32,
     ) {
-        if !c.stroke_visible {
-            return;
-        }
         let stroke_samples = self.samples_per_segment.max(4);
-        let world = c.sampled_path_partial(stroke_samples, partial);
-        if world.len() < 2 {
-            return;
+        let stroke_world = c.sampled_path_partial(stroke_samples, partial);
+        let stroke_pts: Vec<Pos2> = stroke_world.iter().map(|p| self.w2s(rect, *p)).collect();
+
+        if c.fill_enabled {
+            let fill_samples = stroke_samples.max(64);
+            let fill_world = if fill_samples == stroke_samples {
+                stroke_world.clone()
+            } else {
+                c.sampled_path_partial(fill_samples, partial)
+            };
+            let fill_pts: Vec<Pos2> = fill_world.iter().map(|p| self.w2s(rect, *p)).collect();
+            if fill_pts.len() >= 3 {
+                let fill_color = Color32::from_rgba_unmultiplied(
+                    c.fill_color[0],
+                    c.fill_color[1],
+                    c.fill_color[2],
+                    c.fill_color[3],
+                );
+                draw_filled_polygon(painter, &fill_pts, fill_color);
+            }
         }
-        let pts: Vec<Pos2> = world.iter().map(|p| self.w2s(rect, *p)).collect();
-        let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
-        let stroke = Stroke::new(c.thickness, color);
-        painter.add(egui::Shape::line(pts, stroke));
+
+        if c.stroke_visible && stroke_pts.len() >= 2 {
+            let color = Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
+            let stroke = Stroke::new(c.thickness, color);
+            painter.add(egui::Shape::line(stroke_pts, stroke));
+        }
     }
 
     fn draw_handles(
