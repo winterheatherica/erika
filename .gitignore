@@ -1,1 +1,9 @@
 /target
+
+# User-generated outputs — keep folder via .gitkeep, ignore the rest
+project/*
+!project/.gitkeep
+export/png/*
+!export/png/.gitkeep
+export/svg/*
+!export/svg/.gitkeep
