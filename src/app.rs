@@ -15,6 +15,17 @@ fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
     pb
 }
 
+/// Excel-column style names: A, B, …, Z, AA, AB, …, ZZ, AAA, …
+fn bijective_base26(mut n: usize) -> String {
+    let mut chars = Vec::new();
+    while n > 0 {
+        let rem = (n - 1) % 26;
+        chars.push((b'A' + rem as u8) as char);
+        n = (n - 1) / 26;
+    }
+    chars.iter().rev().collect()
+}
+
 use crate::curve::{Arr, CurveSet, Group, P, PALETTE};
 use crate::image_ref::ReferenceImage;
 use crate::persist::{CameraState, Project};
@@ -553,8 +564,7 @@ impl App {
     }
 
     pub(crate) fn add_group(&mut self) -> u64 {
-        let next_letter = self.next_default_folder_letter();
-        let name = next_letter.to_string();
+        let name = self.next_default_folder_name();
         let id = self.next_group_id;
         self.next_group_id += 1;
         let g = Group::new(id, name.clone(), name);
@@ -562,15 +572,15 @@ impl App {
         id
     }
 
-    fn next_default_folder_letter(&self) -> char {
-        for offset in 0..26u8 {
-            let letter = (b'A' + offset) as char;
-            let candidate = letter.to_string();
+    fn next_default_folder_name(&self) -> String {
+        let mut n = 1usize;
+        loop {
+            let candidate = bijective_base26(n);
             if !self.groups.iter().any(|g| g.name == candidate) {
-                return letter;
+                return candidate;
             }
+            n += 1;
         }
-        'Z'
     }
 
     pub(crate) fn remove_group(&mut self, group_id: u64) {
@@ -827,5 +837,31 @@ impl eframe::App for App {
         if !interacting {
             self.commit_if_changed();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bijective_base26;
+
+    #[test]
+    fn base26_single_letters() {
+        assert_eq!(bijective_base26(1), "A");
+        assert_eq!(bijective_base26(2), "B");
+        assert_eq!(bijective_base26(26), "Z");
+    }
+
+    #[test]
+    fn base26_double_letters() {
+        assert_eq!(bijective_base26(27), "AA");
+        assert_eq!(bijective_base26(28), "AB");
+        assert_eq!(bijective_base26(52), "AZ");
+        assert_eq!(bijective_base26(53), "BA");
+        assert_eq!(bijective_base26(702), "ZZ");
+    }
+
+    #[test]
+    fn base26_triple_letters() {
+        assert_eq!(bijective_base26(703), "AAA");
     }
 }
