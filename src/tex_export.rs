@@ -22,33 +22,13 @@ pub fn export_tex(curves: &[CurveSet], cfg: &TexConfig) -> Result<(), String> {
         )
     })?;
 
-    let mut out = String::new();
+    let mut header = String::new();
     for line in template.lines().take(HEADER_LINES) {
-        out.push_str(line);
-        out.push('\n');
+        header.push_str(line);
+        header.push('\n');
     }
 
-    let mut bezier_idx: usize = 0;
-    for c in curves {
-        if !c.visible {
-            continue;
-        }
-        match c.kind {
-            CurveKind::Bezier => {
-                if c.n() == 0 {
-                    continue;
-                }
-                emit_bezier_tex(&mut out, c, bezier_idx);
-                bezier_idx += 1;
-            }
-            CurveKind::Ellipse => {
-                if c.ellipse_rx.abs() < 1e-6 || c.ellipse_ry.abs() < 1e-6 {
-                    continue;
-                }
-                emit_ellipse_tex(&mut out, c);
-            }
-        }
-    }
+    let out = build_tex_output(curves, &header);
 
     if let Some(parent) = cfg.path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -57,6 +37,48 @@ pub fn export_tex(curves: &[CurveSet], cfg: &TexConfig) -> Result<(), String> {
     }
     std::fs::write(cfg.path, out).map_err(|e| format!("Write failed: {e}"))?;
     Ok(())
+}
+
+fn build_tex_output(curves: &[CurveSet], header: &str) -> String {
+    let mut out = String::from(header);
+
+    let mut plan: Vec<(usize, Option<usize>)> = Vec::new();
+    let mut bezier_idx: usize = 0;
+    for (ci, c) in curves.iter().enumerate() {
+        if !c.visible {
+            continue;
+        }
+        match c.kind {
+            CurveKind::Bezier => {
+                if c.n() == 0 {
+                    continue;
+                }
+                plan.push((ci, Some(bezier_idx)));
+                bezier_idx += 1;
+            }
+            CurveKind::Ellipse => {
+                if c.ellipse_rx.abs() < 1e-6 || c.ellipse_ry.abs() < 1e-6 {
+                    continue;
+                }
+                plan.push((ci, None));
+            }
+        }
+    }
+
+    for &(ci, bidx_opt) in &plan {
+        match bidx_opt {
+            Some(bidx) => emit_bezier_plot(&mut out, bidx),
+            None => emit_ellipse_tex(&mut out, &curves[ci]),
+        }
+    }
+
+    for &(ci, bidx_opt) in &plan {
+        if let Some(bidx) = bidx_opt {
+            emit_bezier_data(&mut out, &curves[ci], bidx);
+        }
+    }
+
+    out
 }
 
 fn bezier_letter(idx: usize) -> &'static str {
@@ -72,7 +94,7 @@ fn bezier_subscript(idx: usize, sub: usize) -> String {
     }
 }
 
-fn emit_bezier_tex(out: &mut String, c: &CurveSet, idx: usize) {
+fn emit_bezier_plot(out: &mut String, idx: usize) {
     let letter = bezier_letter(idx);
     let s1_sub = bezier_subscript(idx, 1);
     let s2_sub = bezier_subscript(idx, 2);
@@ -81,6 +103,13 @@ fn emit_bezier_tex(out: &mut String, c: &CurveSet, idx: usize) {
     out.push_str(&format!(
         "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right),B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)\n"
     ));
+}
+
+fn emit_bezier_data(out: &mut String, c: &CurveSet, idx: usize) {
+    let letter = bezier_letter(idx);
+    let s1_sub = bezier_subscript(idx, 1);
+    let s2_sub = bezier_subscript(idx, 2);
+    let s3_sub = bezier_subscript(idx, 3);
 
     let n = c.n();
     let arrays = [(&s1_sub, &c.s1), (&s2_sub, &c.s2), (&s3_sub, &c.s3)];
@@ -161,21 +190,30 @@ mod tests {
     }
 
     #[test]
-    fn emit_bezier_writes_expected_lines() {
+    fn emit_bezier_plot_writes_plot_line() {
+        let mut out = String::new();
+        emit_bezier_plot(&mut out, 0);
+        assert_eq!(
+            out.trim(),
+            "\\left(B_{x}\\left(S_{1},S_{2},S_{3}\\right),B_{y}\\left(S_{1},S_{2},S_{3}\\right)\\right)"
+        );
+    }
+
+    #[test]
+    fn emit_bezier_data_writes_data_lines() {
         let mut c = CurveSet::empty("c", [0, 0, 0]);
         c.s1.push(P::new(0.0, 0.0));
         c.s2.push(P::new(1.0, 1.0));
         c.s3.push(P::new(2.0, 0.0));
         let mut out = String::new();
-        emit_bezier_tex(&mut out, &c, 0);
-        assert!(out.contains("B_{x}\\left(S_{1},S_{2},S_{3}\\right)"));
+        emit_bezier_data(&mut out, &c, 0);
         assert!(out.contains("S_{1}=[(0,0)]"));
         assert!(out.contains("S_{2}=[(1,1)]"));
         assert!(out.contains("S_{3}=[(2,0)]"));
     }
 
     #[test]
-    fn multiple_bezier_curves_use_different_letters() {
+    fn build_tex_output_groups_all_plots_before_data() {
         let mut a = CurveSet::empty("a", [0, 0, 0]);
         a.s1.push(P::new(0.0, 0.0));
         a.s2.push(P::new(1.0, 1.0));
@@ -184,14 +222,38 @@ mod tests {
         b.s1.push(P::new(3.0, 3.0));
         b.s2.push(P::new(4.0, 4.0));
         b.s3.push(P::new(5.0, 3.0));
+        let curves = vec![a, b];
 
-        let mut out = String::new();
-        emit_bezier_tex(&mut out, &a, 0);
-        emit_bezier_tex(&mut out, &b, 1);
+        let out = build_tex_output(&curves, "");
+        let plot_s = out.find("B_{x}\\left(S_").expect("S plot");
+        let plot_t = out.find("B_{x}\\left(T_").expect("T plot");
+        let data_s = out.find("S_{1}=").expect("S data");
+        let data_t = out.find("T_{1}=").expect("T data");
 
-        assert!(out.contains("S_{1}=[(0,0)]"));
-        assert!(out.contains("T_{1}=[(3,3)]"));
-        assert!(out.contains("T_{3}=[(5,3)]"));
+        assert!(plot_s < plot_t, "plots should keep curve order");
+        assert!(plot_t < data_s, "every plot should appear before any data");
+        assert!(data_s < data_t, "data should keep curve order");
+    }
+
+    #[test]
+    fn build_tex_output_skips_invisible_and_empty() {
+        let mut visible = CurveSet::empty("visible", [0, 0, 0]);
+        visible.s1.push(P::new(0.0, 0.0));
+        visible.s2.push(P::new(1.0, 1.0));
+        visible.s3.push(P::new(2.0, 0.0));
+
+        let mut hidden = CurveSet::empty("hidden", [0, 0, 0]);
+        hidden.s1.push(P::new(9.0, 9.0));
+        hidden.s2.push(P::new(8.0, 8.0));
+        hidden.s3.push(P::new(7.0, 7.0));
+        hidden.visible = false;
+
+        let empty = CurveSet::empty("empty", [0, 0, 0]);
+
+        let out = build_tex_output(&[visible, hidden, empty], "");
+        assert!(out.contains("S_{1}"));
+        assert!(!out.contains("9"));
+        assert!(!out.contains("T_"));
     }
 
     #[test]
