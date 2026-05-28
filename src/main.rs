@@ -1,6 +1,7 @@
 mod app;
 mod curve;
 mod export;
+mod export_path;
 mod image_ref;
 mod persist;
 mod svg_export;

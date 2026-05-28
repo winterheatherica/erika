@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use eframe::egui;
 use egui::Color32;
 
-use crate::app::{App, ColorPickTarget, TEX_TEMPLATE_PATH};
+use crate::app::{
+    App, ColorPickTarget, PNG_EXPORT_DIR, SVG_EXPORT_DIR, TEX_EXPORT_DIR, TEX_TEMPLATE_PATH,
+};
 use crate::export::{ExportConfig, export_png};
+use crate::export_path::build_dynamic_path;
 use crate::svg_export::{SvgConfig, export_svg};
 use crate::tex_export::{TexConfig, export_tex};
 
@@ -80,7 +83,7 @@ impl App {
             ui.label("samples:");
             ui.add(egui::DragValue::new(&mut self.export_samples).range(8..=512));
             if ui.button("Export PNG").clicked() {
-                let path = PathBuf::from(&self.export_path);
+                let path = build_dynamic_path(&self.export_path, PNG_EXPORT_DIR, "png");
                 let bg = if self.export_transparent {
                     None
                 } else {
@@ -107,7 +110,7 @@ impl App {
                     .hint_text("output.svg"),
             );
             if ui.button("Export SVG").clicked() {
-                let path = PathBuf::from(&self.svg_export_path);
+                let path = build_dynamic_path(&self.svg_export_path, SVG_EXPORT_DIR, "svg");
                 let bg = if self.export_transparent {
                     None
                 } else {
@@ -133,7 +136,7 @@ impl App {
                     .hint_text("output.tex"),
             );
             if ui.button("Export TEX").clicked() {
-                let path = PathBuf::from(&self.tex_export_path);
+                let path = build_dynamic_path(&self.tex_export_path, TEX_EXPORT_DIR, "tex");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
                 let cfg = TexConfig {
                     path: &path,
