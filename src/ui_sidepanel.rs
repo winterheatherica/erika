@@ -2,7 +2,7 @@ use eframe::egui;
 use egui::Color32;
 
 use crate::app::{App, ColorPickTarget, RenderMode};
-use crate::curve::{Arr, CurveKind, CurveSet, LineStyle, P, PALETTE};
+use crate::curve::{Arr, CurveKind, CurveSet, LineStyle, PALETTE};
 use crate::ui_topbar::pick_color_button_widget;
 
 impl App {
@@ -616,8 +616,6 @@ impl App {
     }
 
     fn points_array_editor(&mut self, ui: &mut egui::Ui, ci: usize, a: Arr) {
-        let mut remove_idx: Option<usize> = None;
-        let mut insert_after: Option<usize> = None;
         let mut do_auto_merge = false;
         let len = self.curves[ci].get(a).len();
         let s1_first = self.curves[ci].s1.first().copied();
@@ -638,12 +636,6 @@ impl App {
                         .fixed_decimals(3)
                         .prefix("y="),
                 );
-                if ui.small_button("+").on_hover_text("Insert after").clicked() {
-                    insert_after = Some(i);
-                }
-                if ui.small_button("🗑").clicked() {
-                    remove_idx = Some(i);
-                }
                 if a == Arr::S3 && i + 1 == len && s1_first.is_some() {
                     if ui
                         .small_button("⤴ auto merge")
@@ -654,24 +646,6 @@ impl App {
                     }
                 }
             });
-        }
-        ui.horizontal(|ui| {
-            if ui.button("+ append").clicked() {
-                let arr = self.curves[ci].get_mut(a);
-                let p = arr.last().copied().unwrap_or(P::new(0.0, 0.0));
-                arr.push(p);
-            }
-            if ui.button("clear").clicked() {
-                self.curves[ci].get_mut(a).clear();
-            }
-        });
-        if let Some(i) = insert_after {
-            let arr = self.curves[ci].get_mut(a);
-            let p = arr.get(i).copied().unwrap_or(P::new(0.0, 0.0));
-            arr.insert(i + 1, p);
-        }
-        if let Some(i) = remove_idx {
-            self.curves[ci].get_mut(a).remove(i);
         }
         if do_auto_merge {
             if let Some(first) = s1_first {
