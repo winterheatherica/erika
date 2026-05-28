@@ -134,7 +134,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let default_group = Group::new(1, "FolderA", "FolderA");
+        let default_group = Group::new(1, "A", "A");
         let mut first_curve = CurveSet::empty("Curve 1", PALETTE[0]);
         first_curve.group_id = Some(default_group.id);
         let initial = vec![first_curve];
@@ -512,8 +512,7 @@ impl App {
         self.curves = p.curves;
         self.groups = p.groups;
         if self.groups.is_empty() {
-            self.groups
-                .push(Group::new(1, "FolderA", "FolderA"));
+            self.groups.push(Group::new(1, "A", "A"));
         }
         self.next_group_id = self.groups.iter().map(|g| g.id).max().unwrap_or(0) + 1;
         let default_id = self.groups[0].id;
@@ -555,7 +554,7 @@ impl App {
 
     pub(crate) fn add_group(&mut self) -> u64 {
         let next_letter = self.next_default_folder_letter();
-        let name = format!("Folder{next_letter}");
+        let name = next_letter.to_string();
         let id = self.next_group_id;
         self.next_group_id += 1;
         let g = Group::new(id, name.clone(), name);
@@ -566,7 +565,7 @@ impl App {
     fn next_default_folder_letter(&self) -> char {
         for offset in 0..26u8 {
             let letter = (b'A' + offset) as char;
-            let candidate = format!("Folder{letter}");
+            let candidate = letter.to_string();
             if !self.groups.iter().any(|g| g.name == candidate) {
                 return letter;
             }
