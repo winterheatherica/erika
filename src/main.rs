@@ -7,6 +7,7 @@ mod persist;
 mod svg_export;
 mod tex_export;
 mod ui_canvas;
+mod ui_color;
 mod ui_sidepanel;
 mod ui_topbar;
 

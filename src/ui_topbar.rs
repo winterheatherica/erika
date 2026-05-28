@@ -55,7 +55,7 @@ impl App {
             }
             ui.separator();
             ui.label("BG:");
-            let _ = ui.color_edit_button_srgb(&mut self.background);
+            let _ = crate::ui_color::color_edit_hex_rgb(ui, "bg_hex", &mut self.background);
             let img_ready = self
                 .reference_image
                 .as_ref()
