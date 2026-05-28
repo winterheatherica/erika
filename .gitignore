@@ -7,3 +7,5 @@ export/png/*
 !export/png/.gitkeep
 export/svg/*
 !export/svg/.gitkeep
+export/tex/*
+!export/tex/.gitkeep

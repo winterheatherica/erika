@@ -6,6 +6,8 @@ use egui::{Pos2, Rect, Vec2};
 pub(crate) const PROJECT_DIR: &str = "./project";
 pub(crate) const PNG_EXPORT_DIR: &str = "./export/png";
 pub(crate) const SVG_EXPORT_DIR: &str = "./export/svg";
+pub(crate) const TEX_EXPORT_DIR: &str = "./export/tex";
+pub(crate) const TEX_TEMPLATE_PATH: &str = "./template/art.tex";
 
 fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
     let pb = p.as_ref().to_path_buf();
@@ -99,6 +101,7 @@ pub struct App {
     pub(crate) export_transparent: bool,
     pub(crate) export_samples: usize,
     pub(crate) svg_export_path: String,
+    pub(crate) tex_export_path: String,
     pub(crate) last_msg: Option<String>,
 
     pub(crate) new_curve_name: String,
@@ -156,6 +159,7 @@ impl App {
             export_transparent: false,
             export_samples: 64,
             svg_export_path: format!("{}/output.svg", SVG_EXPORT_DIR),
+            tex_export_path: format!("{}/output.tex", TEX_EXPORT_DIR),
             last_msg: None,
             new_curve_name: String::new(),
             new_curve_kind: crate::curve::CurveKind::Bezier,

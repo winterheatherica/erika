@@ -4,6 +4,7 @@ mod export;
 mod image_ref;
 mod persist;
 mod svg_export;
+mod tex_export;
 mod ui_canvas;
 mod ui_sidepanel;
 mod ui_topbar;

@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use eframe::egui;
 use egui::Color32;
 
-use crate::app::{App, ColorPickTarget};
+use crate::app::{App, ColorPickTarget, TEX_TEMPLATE_PATH};
 use crate::export::{ExportConfig, export_png};
 use crate::svg_export::{SvgConfig, export_svg};
+use crate::tex_export::{TexConfig, export_tex};
 
 impl App {
     pub(crate) fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -121,6 +122,25 @@ impl App {
                 };
                 self.last_msg = Some(match export_svg(&self.curves, &cfg) {
                     Ok(()) => format!("Exported SVG → {}", path.display()),
+                    Err(e) => format!("Error: {e}"),
+                });
+            }
+            ui.separator();
+            ui.label("TEX:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.tex_export_path)
+                    .desired_width(160.0)
+                    .hint_text("output.tex"),
+            );
+            if ui.button("Export TEX").clicked() {
+                let path = PathBuf::from(&self.tex_export_path);
+                let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
+                let cfg = TexConfig {
+                    path: &path,
+                    template_path: &template_path,
+                };
+                self.last_msg = Some(match export_tex(&self.curves, &cfg) {
+                    Ok(()) => format!("Exported TEX → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
             }
