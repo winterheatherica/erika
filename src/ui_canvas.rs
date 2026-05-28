@@ -368,10 +368,10 @@ impl App {
                         let is_drag = self.dragging_handle == Some(HandleId::Bezier(ci, a, pi));
                         let is_active = is_sel && pi == active;
                         let base_r = match a {
-                            Arr::S1 | Arr::S3 => 5.0,
-                            Arr::S2 => 4.0,
+                            Arr::S1 | Arr::S3 => 7.5,
+                            Arr::S2 => 6.5,
                         };
-                        let r = if is_active { base_r } else { base_r * 0.65 };
+                        let r = if is_active { base_r } else { base_r * 0.7 };
                         let alpha: u8 = if is_active { 255 } else { 70 };
                         let color =
                             Color32::from_rgba_unmultiplied(base[0], base[1], base[2], alpha);
@@ -412,19 +412,19 @@ impl App {
                 let is_ry_drag = self.dragging_handle == Some(HandleId::EllipseRy(ci));
                 painter.circle(
                     sp_center,
-                    if is_sel { 6.0 } else { 4.0 },
+                    if is_sel { 8.5 } else { 6.0 },
                     color,
                     Stroke::new(if is_center_drag { 2.5 } else { 1.5 }, color),
                 );
                 painter.circle(
                     sp_rx,
-                    if is_sel { 5.0 } else { 3.5 },
+                    if is_sel { 7.5 } else { 5.5 },
                     white,
                     Stroke::new(if is_rx_drag { 2.5 } else { 1.5 }, color),
                 );
                 painter.circle(
                     sp_ry,
-                    if is_sel { 5.0 } else { 3.5 },
+                    if is_sel { 7.5 } else { 5.5 },
                     white,
                     Stroke::new(if is_ry_drag { 2.5 } else { 1.5 }, color),
                 );

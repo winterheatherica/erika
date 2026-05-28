@@ -15,7 +15,6 @@ fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
     pb
 }
 
-/// Excel-column style names: A, B, …, Z, AA, AB, …, ZZ, AAA, …
 fn bijective_base26(mut n: usize) -> String {
     let mut chars = Vec::new();
     while n > 0 {
@@ -367,7 +366,7 @@ impl App {
         if !c.visible || !c.show_handles {
             return None;
         }
-        let threshold_sq = 14.0 * 14.0;
+        let threshold_sq = 30.0 * 30.0;
         let mut best: Option<(HandleId, f32)> = None;
         let mut consider = |h: HandleId, p: P| {
             let sp = self.w2s(rect, p);
