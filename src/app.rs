@@ -15,7 +15,7 @@ fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
     pb
 }
 
-use crate::curve::{Arr, CurveSet, P, PALETTE};
+use crate::curve::{Arr, CurveSet, Group, P, PALETTE};
 use crate::image_ref::ReferenceImage;
 use crate::persist::{CameraState, Project};
 
@@ -71,6 +71,9 @@ impl RenderMode {
 pub struct App {
     pub(crate) curves: Vec<CurveSet>,
     pub(crate) selected: usize,
+    pub(crate) groups: Vec<Group>,
+    pub(crate) next_group_id: u64,
+    pub(crate) new_curve_group_id: Option<u64>,
 
     pub(crate) center_x: f32,
     pub(crate) center_y: f32,
@@ -131,10 +134,16 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let initial = vec![CurveSet::empty("Curve 1", PALETTE[0])];
+        let default_group = Group::new(1, "FolderA", "FolderA");
+        let mut first_curve = CurveSet::empty("Curve 1", PALETTE[0]);
+        first_curve.group_id = Some(default_group.id);
+        let initial = vec![first_curve];
         Self {
             curves: initial.clone(),
             selected: 0,
+            groups: vec![default_group.clone()],
+            next_group_id: 2,
+            new_curve_group_id: Some(default_group.id),
             center_x: 0.0,
             center_y: 0.0,
             scale: 70.0,
@@ -495,18 +504,38 @@ impl App {
             },
             samples_per_segment: self.samples_per_segment,
             background: self.background,
+            groups: self.groups.clone(),
         }
     }
 
     fn apply_project(&mut self, p: Project) {
         self.curves = p.curves;
+        self.groups = p.groups;
+        if self.groups.is_empty() {
+            self.groups
+                .push(Group::new(1, "FolderA", "FolderA"));
+        }
+        self.next_group_id = self.groups.iter().map(|g| g.id).max().unwrap_or(0) + 1;
+        let default_id = self.groups[0].id;
+        for c in &mut self.curves {
+            let needs_reassign = match c.group_id {
+                None => true,
+                Some(gid) => !self.groups.iter().any(|g| g.id == gid),
+            };
+            if needs_reassign {
+                c.group_id = Some(default_id);
+            }
+        }
         if self.curves.is_empty() {
-            self.curves.push(CurveSet::empty("Curve 1", PALETTE[0]));
+            let mut c = CurveSet::empty("Curve 1", PALETTE[0]);
+            c.group_id = Some(default_id);
+            self.curves.push(c);
         }
         for c in &mut self.curves {
             c.clamp_active_segment();
         }
         self.selected = 0;
+        self.new_curve_group_id = Some(default_id);
         self.reference_image = p.reference_image.map(|mut i| {
             i.texture = None;
             i.load_error = None;
@@ -522,6 +551,46 @@ impl App {
         self.redo_stack.clear();
         self.last_committed_curves = self.curves.clone();
         self.sync_created_at();
+    }
+
+    pub(crate) fn add_group(&mut self) -> u64 {
+        let next_letter = self.next_default_folder_letter();
+        let name = format!("Folder{next_letter}");
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        let g = Group::new(id, name.clone(), name);
+        self.groups.push(g);
+        id
+    }
+
+    fn next_default_folder_letter(&self) -> char {
+        for offset in 0..26u8 {
+            let letter = (b'A' + offset) as char;
+            let candidate = format!("Folder{letter}");
+            if !self.groups.iter().any(|g| g.name == candidate) {
+                return letter;
+            }
+        }
+        'Z'
+    }
+
+    pub(crate) fn remove_group(&mut self, group_id: u64) {
+        if self.groups.len() <= 1 {
+            return;
+        }
+        let Some(pos) = self.groups.iter().position(|g| g.id == group_id) else {
+            return;
+        };
+        self.groups.remove(pos);
+        let fallback_id = self.groups[0].id;
+        for c in &mut self.curves {
+            if c.group_id == Some(group_id) {
+                c.group_id = Some(fallback_id);
+            }
+        }
+        if self.new_curve_group_id == Some(group_id) {
+            self.new_curve_group_id = Some(fallback_id);
+        }
     }
 
     pub(crate) fn move_curve_forward(&mut self, i: usize) {

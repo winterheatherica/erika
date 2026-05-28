@@ -142,7 +142,7 @@ impl App {
                     path: &path,
                     template_path: &template_path,
                 };
-                self.last_msg = Some(match export_tex(&self.curves, &cfg) {
+                self.last_msg = Some(match export_tex(&self.curves, &self.groups, &cfg) {
                     Ok(()) => format!("Exported TEX → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });

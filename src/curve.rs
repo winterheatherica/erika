@@ -1,5 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Group {
+    pub id: u64,
+    pub name: String,
+    pub tex_param: String,
+}
+
+impl Group {
+    pub fn new(id: u64, name: impl Into<String>, tex_param: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            tex_param: tex_param.into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct P {
     pub x: f32,
@@ -158,6 +175,8 @@ pub struct CurveSet {
     pub active_segment: usize,
     #[serde(default)]
     pub created_at: Vec<u64>,
+    #[serde(default)]
+    pub group_id: Option<u64>,
 }
 
 impl CurveSet {
@@ -185,6 +204,7 @@ impl CurveSet {
             fill_color: [color[0], color[1], color[2], 60],
             active_segment: 0,
             created_at: Vec::new(),
+            group_id: None,
         }
     }
 

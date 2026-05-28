@@ -10,6 +10,8 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("left_scroll")
             .show(ui, |ui| {
+                self.groups_section(ui);
+                ui.separator();
                 self.curves_section(ui);
                 ui.separator();
                 self.edit_overrides_section(ui);
@@ -20,6 +22,53 @@ impl App {
                 ui.separator();
                 self.shape_editor_section(ui);
             });
+    }
+
+    fn groups_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Groups");
+        ui.label(
+            egui::RichText::new(
+                "TEX param: first char = variable, rest joins subscript (e.g. \"Head\" → H_{ead1}).",
+            )
+            .small()
+            .weak(),
+        );
+
+        if ui.button("+ Add group").clicked() {
+            let id = self.add_group();
+            self.new_curve_group_id = Some(id);
+        }
+
+        let mut remove_group_id: Option<u64> = None;
+        let can_delete = self.groups.len() > 1;
+        for g in &mut self.groups {
+            ui.horizontal(|ui| {
+                ui.label("📁");
+                ui.add(
+                    egui::TextEdit::singleline(&mut g.name)
+                        .desired_width(110.0)
+                        .hint_text("name"),
+                );
+                ui.label("param:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut g.tex_param)
+                        .desired_width(90.0)
+                        .hint_text("e.g. A"),
+                );
+                let del = ui.add_enabled(can_delete, egui::Button::new("🗑").small());
+                let del = if can_delete {
+                    del.on_hover_text("Delete group (curves reassigned to first remaining)")
+                } else {
+                    del.on_hover_text("Cannot delete the last remaining group")
+                };
+                if del.clicked() {
+                    remove_group_id = Some(g.id);
+                }
+            });
+        }
+        if let Some(id) = remove_group_id {
+            self.remove_group(id);
+        }
     }
 
     fn edit_overrides_section(&mut self, ui: &mut egui::Ui) {
@@ -112,6 +161,11 @@ impl App {
 
     fn curves_section(&mut self, ui: &mut egui::Ui) {
         ui.heading("Curves");
+        let groups_info: Vec<(u64, String)> = self
+            .groups
+            .iter()
+            .map(|g| (g.id, g.name.clone()))
+            .collect();
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.new_curve_name)
@@ -125,6 +179,23 @@ impl App {
                         ui.selectable_value(&mut self.new_curve_kind, k, k.label());
                     }
                 });
+            let current_group_label = self
+                .new_curve_group_id
+                .and_then(|id| {
+                    groups_info
+                        .iter()
+                        .find(|(gid, _)| *gid == id)
+                        .map(|(_, n)| n.as_str())
+                })
+                .unwrap_or("(none)");
+            egui::ComboBox::from_id_salt("new_curve_group")
+                .selected_text(current_group_label)
+                .width(100.0)
+                .show_ui(ui, |ui| {
+                    for (gid, gname) in &groups_info {
+                        ui.selectable_value(&mut self.new_curve_group_id, Some(*gid), gname);
+                    }
+                });
             if ui.button("+ Add").clicked() {
                 let name = if self.new_curve_name.trim().is_empty() {
                     format!("Curve {}", self.curves.len() + 1)
@@ -132,12 +203,15 @@ impl App {
                     self.new_curve_name.trim().to_string()
                 };
                 let color = PALETTE[self.curves.len() % PALETTE.len()];
-                let new_curve = match self.new_curve_kind {
+                let mut new_curve = match self.new_curve_kind {
                     CurveKind::Bezier => CurveSet::empty(name, color),
                     CurveKind::Ellipse => {
                         CurveSet::new_ellipse(name, color, self.center_x, self.center_y)
                     }
                 };
+                new_curve.group_id = self
+                    .new_curve_group_id
+                    .or_else(|| self.groups.first().map(|g| g.id));
                 self.curves.push(new_curve);
                 self.selected = self.curves.len() - 1;
                 self.new_curve_name.clear();
@@ -168,6 +242,23 @@ impl App {
                 if ui.selectable_label(self.selected == i, label).clicked() {
                     select = Some(i);
                 }
+                let group_label = c
+                    .group_id
+                    .and_then(|id| {
+                        groups_info
+                            .iter()
+                            .find(|(gid, _)| *gid == id)
+                            .map(|(_, n)| n.as_str())
+                    })
+                    .unwrap_or("(none)");
+                egui::ComboBox::from_id_salt(format!("grp_{i}"))
+                    .selected_text(group_label)
+                    .width(80.0)
+                    .show_ui(ui, |ui| {
+                        for (gid, gname) in &groups_info {
+                            ui.selectable_value(&mut c.group_id, Some(*gid), gname);
+                        }
+                    });
                 if ui
                     .add_enabled(i + 1 < total, egui::Button::new("▲").small())
                     .on_hover_text("Bring forward (draw on top of next)")

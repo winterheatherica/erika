@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::curve::CurveSet;
+use crate::curve::{CurveSet, Group};
 use crate::image_ref::ReferenceImage;
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -24,6 +24,8 @@ pub struct Project {
     pub samples_per_segment: usize,
     #[serde(default = "default_bg")]
     pub background: [u8; 3],
+    #[serde(default)]
+    pub groups: Vec<Group>,
 }
 
 fn default_version() -> u32 {

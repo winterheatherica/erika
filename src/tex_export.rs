@@ -1,11 +1,7 @@
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::curve::{CurveKind, CurveSet};
-
-const BEZIER_LETTERS: &[&str] = &[
-    "S", "T", "U", "V", "W", "Y", "Z", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N",
-    "O", "Q", "R",
-];
+use crate::curve::{CurveKind, CurveSet, Group};
 
 const HEADER_LINES: usize = 19;
 
@@ -14,7 +10,11 @@ pub struct TexConfig<'a> {
     pub template_path: &'a Path,
 }
 
-pub fn export_tex(curves: &[CurveSet], cfg: &TexConfig) -> Result<(), String> {
+pub fn export_tex(
+    curves: &[CurveSet],
+    groups: &[Group],
+    cfg: &TexConfig,
+) -> Result<(), String> {
     let template = std::fs::read_to_string(cfg.template_path).map_err(|e| {
         format!(
             "Could not read template '{}': {e}",
@@ -28,7 +28,7 @@ pub fn export_tex(curves: &[CurveSet], cfg: &TexConfig) -> Result<(), String> {
         header.push('\n');
     }
 
-    let out = build_tex_output(curves, &header);
+    let out = build_tex_output(curves, groups, &header);
 
     if let Some(parent) = cfg.path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -39,11 +39,22 @@ pub fn export_tex(curves: &[CurveSet], cfg: &TexConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn build_tex_output(curves: &[CurveSet], header: &str) -> String {
+fn build_tex_output(curves: &[CurveSet], groups: &[Group], header: &str) -> String {
     let mut out = String::from(header);
 
-    let mut plan: Vec<(usize, Option<usize>)> = Vec::new();
-    let mut bezier_idx: usize = 0;
+    let tex_param_for: HashMap<u64, &str> = groups
+        .iter()
+        .map(|g| (g.id, g.tex_param.as_str()))
+        .collect();
+    let fallback_param = groups.first().map(|g| g.tex_param.as_str()).unwrap_or("A");
+
+    enum PlanEntry {
+        Bezier { tex_param: String, idx: usize },
+        Ellipse,
+    }
+
+    let mut counters: HashMap<u64, usize> = HashMap::new();
+    let mut plan: Vec<(usize, PlanEntry)> = Vec::new();
     for (ci, c) in curves.iter().enumerate() {
         if !c.visible {
             continue;
@@ -53,72 +64,95 @@ fn build_tex_output(curves: &[CurveSet], header: &str) -> String {
                 if c.n() == 0 {
                     continue;
                 }
-                plan.push((ci, Some(bezier_idx)));
-                bezier_idx += 1;
+                let (group_key, tex_param) = match c.group_id {
+                    Some(id) => {
+                        let t = tex_param_for.get(&id).copied().unwrap_or(fallback_param);
+                        (id, t)
+                    }
+                    None => (0, fallback_param),
+                };
+                let idx = counters.entry(group_key).or_insert(0);
+                plan.push((
+                    ci,
+                    PlanEntry::Bezier {
+                        tex_param: tex_param.to_string(),
+                        idx: *idx,
+                    },
+                ));
+                *idx += 1;
             }
             CurveKind::Ellipse => {
                 if c.ellipse_rx.abs() < 1e-6 || c.ellipse_ry.abs() < 1e-6 {
                     continue;
                 }
-                plan.push((ci, None));
+                plan.push((ci, PlanEntry::Ellipse));
             }
         }
     }
 
-    for &(ci, bidx_opt) in &plan {
-        match bidx_opt {
-            Some(bidx) => emit_bezier_plot(&mut out, bidx),
-            None => emit_ellipse_tex(&mut out, &curves[ci]),
+    for (ci, entry) in &plan {
+        match entry {
+            PlanEntry::Bezier { tex_param, idx } => {
+                emit_bezier_plot(&mut out, tex_param, *idx);
+            }
+            PlanEntry::Ellipse => emit_ellipse_tex(&mut out, &curves[*ci]),
         }
     }
 
-    for &(ci, bidx_opt) in &plan {
-        if let Some(bidx) = bidx_opt {
-            emit_bezier_data(&mut out, &curves[ci], bidx);
+    for (ci, entry) in &plan {
+        if let PlanEntry::Bezier { tex_param, idx } = entry {
+            emit_bezier_data(&mut out, &curves[*ci], tex_param, *idx);
         }
     }
 
     out
 }
 
-fn bezier_letter(idx: usize) -> &'static str {
-    BEZIER_LETTERS[idx % BEZIER_LETTERS.len()]
-}
-
-fn bezier_subscript(idx: usize, sub: usize) -> String {
-    let cycle = idx / BEZIER_LETTERS.len();
-    if cycle == 0 {
-        format!("{sub}")
-    } else {
-        format!("{sub},{}", cycle + 1)
-    }
-}
-
-fn emit_bezier_plot(out: &mut String, idx: usize) {
-    let letter = bezier_letter(idx);
-    let s1_sub = bezier_subscript(idx, 1);
-    let s2_sub = bezier_subscript(idx, 2);
-    let s3_sub = bezier_subscript(idx, 3);
-
+fn emit_bezier_plot(out: &mut String, tex_param: &str, idx: usize) {
+    let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
     out.push_str(&format!(
         "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right),B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)\n"
     ));
 }
 
-fn emit_bezier_data(out: &mut String, c: &CurveSet, idx: usize) {
-    let letter = bezier_letter(idx);
-    let s1_sub = bezier_subscript(idx, 1);
-    let s2_sub = bezier_subscript(idx, 2);
-    let s3_sub = bezier_subscript(idx, 3);
-
+fn emit_bezier_data(out: &mut String, c: &CurveSet, tex_param: &str, idx: usize) {
+    let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
     let n = c.n();
-    let arrays = [(&s1_sub, &c.s1), (&s2_sub, &c.s2), (&s3_sub, &c.s3)];
+    let arrays = [(s1_sub, &c.s1), (s2_sub, &c.s2), (s3_sub, &c.s3)];
     for (sub, arr) in arrays {
         let pts: Vec<String> = (0..n)
             .map(|i| format!("({},{})", fmt_num(arr[i].x), fmt_num(arr[i].y)))
             .collect();
         out.push_str(&format!("{letter}_{{{sub}}}=[{}]\n", pts.join(",")));
     }
+}
+
+fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
+    let mut chars = tex_param.chars();
+    let letter = chars.next().unwrap_or('A');
+    let rest: String = chars.collect();
+    let counter = bijective_base9(idx);
+    let prefix = format!("{rest}{counter}");
+    (
+        letter,
+        format!("{prefix}1"),
+        format!("{prefix}2"),
+        format!("{prefix}3"),
+    )
+}
+
+fn bijective_base9(n: usize) -> String {
+    if n == 0 {
+        return String::new();
+    }
+    let mut result = Vec::new();
+    let mut x = n;
+    while x > 0 {
+        let r = (x - 1) % 9;
+        result.push((b'1' + r as u8) as char);
+        x = (x - 1) / 9;
+    }
+    result.iter().rev().collect()
 }
 
 fn emit_ellipse_tex(out: &mut String, c: &CurveSet) {
@@ -174,28 +208,57 @@ mod tests {
     }
 
     #[test]
-    fn bezier_naming_first_cycle() {
-        assert_eq!(bezier_letter(0), "S");
-        assert_eq!(bezier_letter(1), "T");
-        assert_eq!(bezier_subscript(0, 1), "1");
-        assert_eq!(bezier_subscript(1, 2), "2");
+    fn bijective_base9_basic() {
+        assert_eq!(bijective_base9(0), "");
+        assert_eq!(bijective_base9(1), "1");
+        assert_eq!(bijective_base9(9), "9");
+        assert_eq!(bijective_base9(10), "11");
+        assert_eq!(bijective_base9(18), "19");
+        assert_eq!(bijective_base9(19), "21");
+        assert_eq!(bijective_base9(90), "99");
+        assert_eq!(bijective_base9(91), "111");
     }
 
     #[test]
-    fn bezier_naming_second_cycle_uses_double_subscript() {
-        let n = BEZIER_LETTERS.len();
-        assert_eq!(bezier_letter(n), "S");
-        assert_eq!(bezier_subscript(n, 1), "1,2");
-        assert_eq!(bezier_subscript(n + 1, 3), "3,2");
+    fn subscript_parts_single_letter() {
+        let (letter, s1, s2, s3) = subscript_parts("A", 0);
+        assert_eq!(letter, 'A');
+        assert_eq!((s1.as_str(), s2.as_str(), s3.as_str()), ("1", "2", "3"));
+
+        let (_, s1, s2, s3) = subscript_parts("A", 1);
+        assert_eq!((s1.as_str(), s2.as_str(), s3.as_str()), ("11", "12", "13"));
+
+        let (_, s1, s2, s3) = subscript_parts("A", 10);
+        assert_eq!((s1.as_str(), s2.as_str(), s3.as_str()), ("111", "112", "113"));
+    }
+
+    #[test]
+    fn subscript_parts_multi_letter() {
+        let (letter, s1, s2, s3) = subscript_parts("Head", 0);
+        assert_eq!(letter, 'H');
+        assert_eq!(
+            (s1.as_str(), s2.as_str(), s3.as_str()),
+            ("ead1", "ead2", "ead3")
+        );
+
+        let (letter, s1, _, _) = subscript_parts("FolderA", 0);
+        assert_eq!(letter, 'F');
+        assert_eq!(s1, "olderA1");
+
+        let (_, s1, s2, s3) = subscript_parts("Head", 1);
+        assert_eq!(
+            (s1.as_str(), s2.as_str(), s3.as_str()),
+            ("ead11", "ead12", "ead13")
+        );
     }
 
     #[test]
     fn emit_bezier_plot_writes_plot_line() {
         let mut out = String::new();
-        emit_bezier_plot(&mut out, 0);
+        emit_bezier_plot(&mut out, "A", 0);
         assert_eq!(
             out.trim(),
-            "\\left(B_{x}\\left(S_{1},S_{2},S_{3}\\right),B_{y}\\left(S_{1},S_{2},S_{3}\\right)\\right)"
+            "\\left(B_{x}\\left(A_{1},A_{2},A_{3}\\right),B_{y}\\left(A_{1},A_{2},A_{3}\\right)\\right)"
         );
     }
 
@@ -206,54 +269,89 @@ mod tests {
         c.s2.push(P::new(1.0, 1.0));
         c.s3.push(P::new(2.0, 0.0));
         let mut out = String::new();
-        emit_bezier_data(&mut out, &c, 0);
-        assert!(out.contains("S_{1}=[(0,0)]"));
-        assert!(out.contains("S_{2}=[(1,1)]"));
-        assert!(out.contains("S_{3}=[(2,0)]"));
+        emit_bezier_data(&mut out, &c, "A", 0);
+        assert!(out.contains("A_{1}=[(0,0)]"));
+        assert!(out.contains("A_{2}=[(1,1)]"));
+        assert!(out.contains("A_{3}=[(2,0)]"));
+    }
+
+    fn make_bezier(name: &str, group_id: u64, points: &[(f32, f32, f32, f32, f32, f32)]) -> CurveSet {
+        let mut c = CurveSet::empty(name, [0, 0, 0]);
+        c.group_id = Some(group_id);
+        for &(x1, y1, x2, y2, x3, y3) in points {
+            c.s1.push(P::new(x1, y1));
+            c.s2.push(P::new(x2, y2));
+            c.s3.push(P::new(x3, y3));
+        }
+        c
     }
 
     #[test]
     fn build_tex_output_groups_all_plots_before_data() {
-        let mut a = CurveSet::empty("a", [0, 0, 0]);
-        a.s1.push(P::new(0.0, 0.0));
-        a.s2.push(P::new(1.0, 1.0));
-        a.s3.push(P::new(2.0, 0.0));
-        let mut b = CurveSet::empty("b", [0, 0, 0]);
-        b.s1.push(P::new(3.0, 3.0));
-        b.s2.push(P::new(4.0, 4.0));
-        b.s3.push(P::new(5.0, 3.0));
-        let curves = vec![a, b];
+        let groups = vec![Group::new(1, "Hand", "A")];
+        let curves = vec![
+            make_bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]),
+            make_bezier("b", 1, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]),
+        ];
 
-        let out = build_tex_output(&curves, "");
-        let plot_s = out.find("B_{x}\\left(S_").expect("S plot");
-        let plot_t = out.find("B_{x}\\left(T_").expect("T plot");
-        let data_s = out.find("S_{1}=").expect("S data");
-        let data_t = out.find("T_{1}=").expect("T data");
+        let out = build_tex_output(&curves, &groups, "");
+        let plot_a1 = out.find("B_{x}\\left(A_{1}").expect("A_1 plot");
+        let plot_a11 = out.find("B_{x}\\left(A_{11}").expect("A_11 plot");
+        let data_a1 = out.find("A_{1}=").expect("A_1 data");
+        let data_a11 = out.find("A_{11}=").expect("A_11 data");
 
-        assert!(plot_s < plot_t, "plots should keep curve order");
-        assert!(plot_t < data_s, "every plot should appear before any data");
-        assert!(data_s < data_t, "data should keep curve order");
+        assert!(plot_a1 < plot_a11, "plots should keep curve order");
+        assert!(plot_a11 < data_a1, "every plot should appear before any data");
+        assert!(data_a1 < data_a11, "data should keep curve order");
+    }
+
+    #[test]
+    fn build_tex_output_separate_groups_use_independent_counters() {
+        let groups = vec![
+            Group::new(1, "Hand", "A"),
+            Group::new(2, "Head", "H"),
+        ];
+        let curves = vec![
+            make_bezier("hand1", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]),
+            make_bezier("head1", 2, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]),
+            make_bezier("hand2", 1, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]),
+        ];
+
+        let out = build_tex_output(&curves, &groups, "");
+        assert!(out.contains("A_{1}="), "hand1 should be A_1");
+        assert!(out.contains("H_{1}="), "head1 should be H_1");
+        assert!(out.contains("A_{11}="), "hand2 should be A_11 (next in Hand group)");
     }
 
     #[test]
     fn build_tex_output_skips_invisible_and_empty() {
-        let mut visible = CurveSet::empty("visible", [0, 0, 0]);
-        visible.s1.push(P::new(0.0, 0.0));
-        visible.s2.push(P::new(1.0, 1.0));
-        visible.s3.push(P::new(2.0, 0.0));
-
-        let mut hidden = CurveSet::empty("hidden", [0, 0, 0]);
-        hidden.s1.push(P::new(9.0, 9.0));
-        hidden.s2.push(P::new(8.0, 8.0));
-        hidden.s3.push(P::new(7.0, 7.0));
+        let groups = vec![Group::new(1, "G", "A")];
+        let mut visible = make_bezier("visible", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        visible.visible = true;
+        let mut hidden = make_bezier("hidden", 1, &[(9.0, 9.0, 8.0, 8.0, 7.0, 7.0)]);
         hidden.visible = false;
+        let empty = {
+            let mut c = CurveSet::empty("empty", [0, 0, 0]);
+            c.group_id = Some(1);
+            c
+        };
 
-        let empty = CurveSet::empty("empty", [0, 0, 0]);
-
-        let out = build_tex_output(&[visible, hidden, empty], "");
-        assert!(out.contains("S_{1}"));
+        let out = build_tex_output(&[visible, hidden, empty], &groups, "");
+        assert!(out.contains("A_{1}=[(0,0)]"));
         assert!(!out.contains("9"));
-        assert!(!out.contains("T_"));
+        assert!(!out.contains("A_{11}"));
+    }
+
+    #[test]
+    fn build_tex_output_multi_char_tex_param() {
+        let groups = vec![Group::new(1, "Head", "Head")];
+        let curves = vec![make_bezier("c", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+        let out = build_tex_output(&curves, &groups, "");
+        assert!(
+            out.contains("H_{ead1},H_{ead2},H_{ead3}"),
+            "multi-char tex_param should split first char as variable, rest as subscript prefix:\n{out}"
+        );
+        assert!(out.contains("H_{ead1}=[(0,0)]"));
     }
 
     #[test]
