@@ -677,6 +677,17 @@ impl App {
         }
     }
 
+    pub(crate) fn duplicate_curve(&mut self, i: usize) {
+        let Some(src) = self.curves.get(i) else {
+            return;
+        };
+        let mut copy = src.clone();
+        copy.name = format!("{}-copy", src.name);
+        copy.created_at.clear();
+        self.curves.insert(i + 1, copy);
+        self.selected = i + 1;
+    }
+
     pub(crate) fn save_current(&mut self) {
         let Some(path) = self.current_project_path.clone() else {
             self.save_dialog();
@@ -898,5 +909,20 @@ mod tests {
     #[test]
     fn base26_triple_letters() {
         assert_eq!(bijective_base26(703), "AAA");
+    }
+
+    #[test]
+    fn duplicate_curve_inserts_copy_after_original() {
+        let mut app = super::App::new();
+        app.curves[0].name = "Eye".to_string();
+        let group = app.curves[0].group_id;
+        let n = app.curves.len();
+
+        app.duplicate_curve(0);
+
+        assert_eq!(app.curves.len(), n + 1);
+        assert_eq!(app.curves[1].name, "Eye-copy");
+        assert_eq!(app.curves[1].group_id, group, "copy stays in the same folder");
+        assert_eq!(app.selected, 1, "the copy becomes selected");
     }
 }

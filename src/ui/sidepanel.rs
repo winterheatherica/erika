@@ -248,6 +248,7 @@ impl App {
         });
 
         let mut to_delete: Option<usize> = None;
+        let mut to_duplicate: Option<usize> = None;
         let mut select: Option<usize> = None;
         let mut to_forward: Option<usize> = None;
         let mut to_backward: Option<usize> = None;
@@ -341,6 +342,13 @@ impl App {
                 {
                     to_back = Some(i);
                 }
+                if ui
+                    .add(egui::Button::new("copy").small())
+                    .on_hover_text("Duplicate this curve (name gets \"-copy\")")
+                    .clicked()
+                {
+                    to_duplicate = Some(i);
+                }
                 if ui.small_button("🗑").clicked() {
                     to_delete = Some(i);
                 }
@@ -360,6 +368,9 @@ impl App {
         }
         if let Some(i) = to_back {
             self.move_curve_to_back(i);
+        }
+        if let Some(i) = to_duplicate {
+            self.duplicate_curve(i);
         }
         if let Some(i) = to_delete {
             if self.curves.len() > 1 {
