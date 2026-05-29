@@ -143,7 +143,10 @@ pub(crate) fn bezier_data_latex(c: &CurveSet, tex_param: &str, idx: usize) -> Ve
 }
 
 fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
-    let mut chars = tex_param.chars();
+    // Drop whitespace so a param like "Right Eye" yields R_{ightEye...}, not R_{ight Eye...}
+    // (spaces inside a Desmos subscript are not valid variable-name characters).
+    let cleaned: String = tex_param.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut chars = cleaned.chars();
     let letter = chars.next().unwrap_or('A');
     let rest: String = chars.collect();
     let counter = bijective_base9(idx);
@@ -269,6 +272,16 @@ mod tests {
         assert_eq!(
             (s1.as_str(), s2.as_str(), s3.as_str()),
             ("ead11", "ead12", "ead13")
+        );
+    }
+
+    #[test]
+    fn subscript_parts_strips_whitespace() {
+        let (letter, s1, s2, s3) = subscript_parts("Right Eye", 0);
+        assert_eq!(letter, 'R');
+        assert_eq!(
+            (s1.as_str(), s2.as_str(), s3.as_str()),
+            ("ightEye1", "ightEye2", "ightEye3")
         );
     }
 
