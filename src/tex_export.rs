@@ -109,22 +109,37 @@ fn build_tex_output(curves: &[CurveSet], groups: &[Group], header: &str) -> Stri
 }
 
 fn emit_bezier_plot(out: &mut String, tex_param: &str, idx: usize) {
-    let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
-    out.push_str(&format!(
-        "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right),B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)\n"
-    ));
+    out.push_str(&bezier_plot_latex(tex_param, idx));
+    out.push('\n');
 }
 
 fn emit_bezier_data(out: &mut String, c: &CurveSet, tex_param: &str, idx: usize) {
+    for line in bezier_data_latex(c, tex_param, idx) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+}
+
+pub(crate) fn bezier_plot_latex(tex_param: &str, idx: usize) -> String {
+    let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
+    format!(
+        "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right),B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)"
+    )
+}
+
+pub(crate) fn bezier_data_latex(c: &CurveSet, tex_param: &str, idx: usize) -> Vec<String> {
     let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
     let n = c.n();
     let arrays = [(s1_sub, &c.s1), (s2_sub, &c.s2), (s3_sub, &c.s3)];
-    for (sub, arr) in arrays {
-        let pts: Vec<String> = (0..n)
-            .map(|i| format!("({},{})", fmt_num(arr[i].x), fmt_num(arr[i].y)))
-            .collect();
-        out.push_str(&format!("{letter}_{{{sub}}}=[{}]\n", pts.join(",")));
-    }
+    arrays
+        .into_iter()
+        .map(|(sub, arr)| {
+            let pts: Vec<String> = (0..n)
+                .map(|i| format!("({},{})", fmt_num(arr[i].x), fmt_num(arr[i].y)))
+                .collect();
+            format!("{letter}_{{{sub}}}=[{}]", pts.join(","))
+        })
+        .collect()
 }
 
 fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
@@ -156,15 +171,20 @@ fn bijective_base9(n: usize) -> String {
 }
 
 fn emit_ellipse_tex(out: &mut String, c: &CurveSet) {
+    out.push_str(&ellipse_latex(c));
+    out.push('\n');
+}
+
+pub(crate) fn ellipse_latex(c: &CurveSet) -> String {
     let h = fmt_signed(c.ellipse_cx);
     let k = fmt_signed(c.ellipse_cy);
     let big_a = fmt_signed(c.ellipse_rot_deg.to_radians());
     let a = fmt_num(c.ellipse_rx.abs());
     let b = fmt_num(c.ellipse_ry.abs());
 
-    out.push_str(&format!(
-        "\\frac{{\\left(\\left(x-{h}\\right)\\cos {big_a}+\\left(y-{k}\\right)\\sin {big_a}\\right)^{{2}}}}{{{a}^{{2}}}}+\\frac{{\\left(\\left(x-{h}\\right)\\sin {big_a}-\\left(y-{k}\\right)\\cos {big_a}\\right)^{{2}}}}{{{b}^{{2}}}}=1\n"
-    ));
+    format!(
+        "\\frac{{\\left(\\left(x-{h}\\right)\\cos {big_a}+\\left(y-{k}\\right)\\sin {big_a}\\right)^{{2}}}}{{{a}^{{2}}}}+\\frac{{\\left(\\left(x-{h}\\right)\\sin {big_a}-\\left(y-{k}\\right)\\cos {big_a}\\right)^{{2}}}}{{{b}^{{2}}}}=1"
+    )
 }
 
 fn fmt_num(v: f32) -> String {

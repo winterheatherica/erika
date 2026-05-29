@@ -3,6 +3,7 @@ mod curve;
 mod export;
 mod export_path;
 mod image_ref;
+mod js_export;
 mod persist;
 mod svg_export;
 mod tex_export;

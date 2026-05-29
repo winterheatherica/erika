@@ -4,10 +4,12 @@ use eframe::egui;
 use egui::Color32;
 
 use crate::app::{
-    App, ColorPickTarget, PNG_EXPORT_DIR, SVG_EXPORT_DIR, TEX_EXPORT_DIR, TEX_TEMPLATE_PATH,
+    App, ColorPickTarget, JS_EXPORT_DIR, PNG_EXPORT_DIR, SVG_EXPORT_DIR, TEX_EXPORT_DIR,
+    TEX_TEMPLATE_PATH,
 };
 use crate::export::{ExportConfig, export_png};
 use crate::export_path::build_dynamic_path;
+use crate::js_export::{JsConfig, export_js};
 use crate::svg_export::{SvgConfig, export_svg};
 use crate::tex_export::{TexConfig, export_tex};
 
@@ -144,6 +146,25 @@ impl App {
                 };
                 self.last_msg = Some(match export_tex(&self.curves, &self.groups, &cfg) {
                     Ok(()) => format!("Exported TEX → {}", path.display()),
+                    Err(e) => format!("Error: {e}"),
+                });
+            }
+            ui.separator();
+            ui.label("JS:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.js_export_path)
+                    .desired_width(160.0)
+                    .hint_text("output.js"),
+            );
+            if ui.button("Export JS").clicked() {
+                let path = build_dynamic_path(&self.js_export_path, JS_EXPORT_DIR, "js");
+                let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
+                let cfg = JsConfig {
+                    path: &path,
+                    template_path: &template_path,
+                };
+                self.last_msg = Some(match export_js(&self.curves, &self.groups, &cfg) {
+                    Ok(()) => format!("Exported JS → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
             }
