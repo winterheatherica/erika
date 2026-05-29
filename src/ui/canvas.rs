@@ -2,7 +2,7 @@ use eframe::egui;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
 use crate::app::{App, HandleId};
-use crate::curve::{Arr, CurveKind, CurveSet, P};
+use crate::model::curve::{Arr, CurveKind, CurveSet, P};
 
 impl App {
     pub(crate) fn canvas(&mut self, ui: &mut egui::Ui) {

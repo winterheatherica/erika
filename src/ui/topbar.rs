@@ -7,11 +7,11 @@ use crate::app::{
     App, ColorPickTarget, JS_EXPORT_DIR, PNG_EXPORT_DIR, SVG_EXPORT_DIR, TEX_EXPORT_DIR,
     TEX_TEMPLATE_PATH,
 };
-use crate::export::{ExportConfig, export_png};
-use crate::export_path::build_dynamic_path;
-use crate::js_export::{JsConfig, export_js};
-use crate::svg_export::{SvgConfig, export_svg};
-use crate::tex_export::{TexConfig, export_tex};
+use crate::export::js::{JsConfig, export_js};
+use crate::export::path::build_dynamic_path;
+use crate::export::png::{ExportConfig, export_png};
+use crate::export::svg::{SvgConfig, export_svg};
+use crate::export::tex::{TexConfig, export_tex};
 
 impl App {
     pub(crate) fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -79,7 +79,7 @@ impl App {
                 self.background = if transparent { None } else { Some([245, 245, 250]) };
             }
             if let Some(bg) = self.background.as_mut() {
-                let _ = crate::ui_color::color_edit_hex_rgb(ui, "bg_hex", bg);
+                let _ = crate::ui::color::color_edit_hex_rgb(ui, "bg_hex", bg);
             }
             let img_ready = self
                 .reference_image

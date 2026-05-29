@@ -26,9 +26,9 @@ fn bijective_base26(mut n: usize) -> String {
     chars.iter().rev().collect()
 }
 
-use crate::curve::{Arr, CurveSet, Group, P, PALETTE};
-use crate::image_ref::ReferenceImage;
-use crate::persist::{CameraState, Project};
+use crate::model::curve::{Arr, CurveSet, Group, P, PALETTE};
+use crate::model::image_ref::ReferenceImage;
+use crate::model::persist::{CameraState, Project};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HandleId {
@@ -122,7 +122,7 @@ pub struct App {
     pub(crate) last_msg: Option<String>,
 
     pub(crate) new_curve_name: String,
-    pub(crate) new_curve_kind: crate::curve::CurveKind,
+    pub(crate) new_curve_kind: crate::model::curve::CurveKind,
     pub(crate) current_project_path: Option<PathBuf>,
 
     pub(crate) undo_stack: Vec<Vec<CurveSet>>,
@@ -188,7 +188,7 @@ impl App {
             js_export_path: format!("{}/output.js", JS_EXPORT_DIR),
             last_msg: None,
             new_curve_name: String::new(),
-            new_curve_kind: crate::curve::CurveKind::Bezier,
+            new_curve_kind: crate::model::curve::CurveKind::Bezier,
             current_project_path: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -367,7 +367,7 @@ impl App {
     }
 
     pub(crate) fn find_handle(&self, rect: Rect, pos: Pos2) -> Option<HandleId> {
-        use crate::curve::CurveKind;
+        use crate::model::curve::CurveKind;
         let ci = self.selected;
         let c = self.curves.get(ci)?;
         if !c.visible || !c.show_handles {

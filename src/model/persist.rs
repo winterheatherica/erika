@@ -2,8 +2,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::curve::{CurveSet, Group};
-use crate::image_ref::ReferenceImage;
+use crate::model::curve::{CurveSet, Group};
+use crate::model::image_ref::ReferenceImage;
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct CameraState {

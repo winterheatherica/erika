@@ -2,8 +2,8 @@ use eframe::egui;
 use egui::Color32;
 
 use crate::app::{App, ColorPickTarget, RenderMode};
-use crate::curve::{Arr, CurveKind, CurveSet, LineStyle, PALETTE};
-use crate::ui_topbar::pick_color_button_widget;
+use crate::model::curve::{Arr, CurveKind, CurveSet, LineStyle, PALETTE};
+use crate::ui::topbar::pick_color_button_widget;
 
 impl App {
     pub(crate) fn left_panel(&mut self, ui: &mut egui::Ui) {
@@ -412,7 +412,7 @@ impl App {
             .map_or(false, |i| i.is_ready());
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.stroke_visible, "Show");
-            let _ = crate::ui_color::color_edit_hex_rgb(ui, ("stroke_hex", sel), &mut c.color);
+            let _ = crate::ui::color::color_edit_hex_rgb(ui, ("stroke_hex", sel), &mut c.color);
         });
         ui.horizontal(|ui| {
             pick_color_button_widget(
@@ -445,7 +445,7 @@ impl App {
         ui.label("Fill");
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.fill_enabled, "Enabled");
-            let _ = crate::ui_color::color_edit_hex_rgba(ui, ("fill_hex", sel), &mut c.fill_color);
+            let _ = crate::ui::color::color_edit_hex_rgba(ui, ("fill_hex", sel), &mut c.fill_color);
         });
         ui.horizontal(|ui| {
             pick_color_button_widget(

@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::curve::{CurveKind, CurveSet, Group};
-use crate::tex_export::{bezier_data_latex, bezier_plot_latex, ellipse_latex};
+use crate::model::curve::{CurveKind, CurveSet, Group};
+use crate::export::tex::{bezier_data_latex, bezier_plot_latex, ellipse_latex};
 
 pub struct JsConfig<'a> {
     pub path: &'a Path,
@@ -268,7 +268,7 @@ fn render_js(items: &[Item]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::P;
+    use crate::model::curve::P;
 
     fn bezier(name: &str, group_id: u64, segs: &[(f32, f32, f32, f32, f32, f32)]) -> CurveSet {
         let mut c = CurveSet::empty(name, [10, 20, 30]);

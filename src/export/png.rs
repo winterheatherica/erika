@@ -3,7 +3,7 @@ use tiny_skia::{
     Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, StrokeDash, Transform,
 };
 
-use crate::curve::{CurveKind, CurveSet, LineStyle, P};
+use crate::model::curve::{CurveKind, CurveSet, LineStyle, P};
 
 pub struct ExportConfig<'a> {
     pub width: u32,

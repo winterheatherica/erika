@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::curve::{CurveKind, CurveSet, LineStyle, P};
+use crate::model::curve::{CurveKind, CurveSet, LineStyle, P};
 
 pub struct SvgConfig<'a> {
     pub width: u32,

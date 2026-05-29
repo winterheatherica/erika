@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::curve::{CurveKind, CurveSet, Group};
+use crate::model::curve::{CurveKind, CurveSet, Group};
 
 const HEADER_LINES: usize = 19;
 
@@ -214,7 +214,7 @@ fn fmt_signed(v: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::P;
+    use crate::model::curve::P;
 
     #[test]
     fn fmt_num_trims_zeros() {

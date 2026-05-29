@@ -1,16 +1,7 @@
 mod app;
-mod curve;
 mod export;
-mod export_path;
-mod image_ref;
-mod js_export;
-mod persist;
-mod svg_export;
-mod tex_export;
-mod ui_canvas;
-mod ui_color;
-mod ui_sidepanel;
-mod ui_topbar;
+mod model;
+mod ui;
 
 use app::App;
 
