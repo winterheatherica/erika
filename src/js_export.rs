@@ -8,7 +8,7 @@ pub struct JsConfig<'a> {
     pub template_path: &'a Path,
 }
 
-const TEMPLATE_COLORS: &[&str] = &["#2d70b3", "#388c46", "#6042a6", "#000000"];
+const PLOT_DOMAIN_MAX: usize = 99;
 
 pub fn export_js(curves: &[CurveSet], groups: &[Group], cfg: &JsConfig) -> Result<(), String> {
     let template = std::fs::read_to_string(cfg.template_path).map_err(|e| {
@@ -45,6 +45,8 @@ enum Item {
         color: String,
         latex: String,
         parametric_max: Option<usize>,
+        hidden: bool,
+        fill_opacity: Option<f32>,
     },
 }
 
@@ -57,13 +59,15 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
         id: template_folder.clone(),
         title: "Template".to_string(),
     });
-    for (k, line) in template_lines.iter().enumerate() {
+    for line in template_lines.iter() {
         items.push(Item::Expr {
             id: fresh_id(&mut next_id),
             folder_id: template_folder.clone(),
-            color: TEMPLATE_COLORS[k % TEMPLATE_COLORS.len()].to_string(),
+            color: "#000000".to_string(),
             latex: line.clone(),
             parametric_max: None,
+            hidden: is_plottable_t_helper(line),
+            fill_opacity: None,
         });
     }
 
@@ -107,7 +111,9 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
                     folder_id: folder_id.clone(),
                     color,
                     latex: bezier_plot_latex(&g.tex_param, idx_for[k].unwrap()),
-                    parametric_max: Some(c.n()),
+                    parametric_max: Some(PLOT_DOMAIN_MAX),
+                    hidden: false,
+                    fill_opacity: fill_opacity_for(c),
                 }),
                 CurveKind::Ellipse => items.push(Item::Expr {
                     id: fresh_id(&mut next_id),
@@ -115,6 +121,8 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
                     color,
                     latex: ellipse_latex(c),
                     parametric_max: None,
+                    hidden: false,
+                    fill_opacity: fill_opacity_for(c),
                 }),
             }
         }
@@ -130,6 +138,8 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
                     color: color.clone(),
                     latex,
                     parametric_max: None,
+                    hidden: true,
+                    fill_opacity: None,
                 });
             }
         }
@@ -155,6 +165,21 @@ fn is_exportable(c: &CurveSet) -> bool {
     match c.kind {
         CurveKind::Bezier => c.n() > 0,
         CurveKind::Ellipse => c.ellipse_rx.abs() >= 1e-6 && c.ellipse_ry.abs() >= 1e-6,
+    }
+}
+
+fn is_plottable_t_helper(latex: &str) -> bool {
+    match latex.split_once('=') {
+        Some((lhs, _)) => lhs.trim_end().ends_with("\\left(t\\right)"),
+        None => false,
+    }
+}
+
+fn fill_opacity_for(c: &CurveSet) -> Option<f32> {
+    if c.fill_enabled {
+        Some(c.fill_color[3] as f32 / 255.0)
+    } else {
+        None
     }
 }
 
@@ -191,20 +216,29 @@ fn render_js(items: &[Item]) -> String {
                 color,
                 latex,
                 parametric_max,
+                hidden,
+                fill_opacity,
             } => {
+                let hidden_attr = if *hidden { ", \"hidden\": true" } else { "" };
                 let domain = match parametric_max {
                     Some(max) => format!(
                         ", \"parametricDomain\": {{ \"min\": \"0\", \"max\": \"{max}\" }}"
                     ),
                     None => String::new(),
                 };
+                let fill_attr = match fill_opacity {
+                    Some(op) => format!(", \"fill\": true, \"fillOpacity\": \"{:.3}\"", op),
+                    None => String::new(),
+                };
                 format!(
-                    "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"{}\", \"latex\": \"{}\"{} }}",
+                    "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"{}\"{}, \"latex\": \"{}\"{}{} }}",
                     id,
                     folder_id,
                     color,
+                    hidden_attr,
                     js_escape(latex),
-                    domain
+                    domain,
+                    fill_attr
                 )
             }
         })
@@ -213,17 +247,20 @@ fn render_js(items: &[Item]) -> String {
     let mut out = String::new();
     out.push_str("// Erika -> Desmos export. Paste into the browser console on a Desmos graph.\n");
     out.push_str("// Requires the global `Calc` (open https://www.desmos.com/calculator).\n");
-    out.push_str("// For an exact copy, run Calc.setBlank() before pasting this.\n");
+    out.push_str("// REPLACES every expression on the graph. Folder nesting needs setState\n");
+    out.push_str("// (setExpressions ignores folderId), so we swap the live state's list.\n");
     out.push_str("(function () {\n");
     out.push_str("  if (typeof Calc === \"undefined\") {\n");
     out.push_str("    console.error(\"Desmos `Calc` not found - open a Desmos calculator first.\");\n");
     out.push_str("    return;\n");
     out.push_str("  }\n");
-    out.push_str("  var exprs = [\n");
+    out.push_str("  var list = [\n");
     out.push_str(&lines.join(",\n"));
     out.push_str("\n  ];\n");
-    out.push_str("  Calc.setExpressions(exprs);\n");
-    out.push_str("  console.log(\"Erika: inserted \" + exprs.length + \" items.\");\n");
+    out.push_str("  var state = Calc.getState();\n");
+    out.push_str("  state.expressions.list = list;\n");
+    out.push_str("  Calc.setState(state);\n");
+    out.push_str("  console.log(\"Erika: set \" + list.length + \" items.\");\n");
     out.push_str("})();\n");
     out
 }
@@ -264,9 +301,82 @@ mod tests {
         let out = build_js_output(&curves, &groups, &[]);
         assert!(out.contains("\"id\": \"3\", \"title\": \"Face\""));
         assert!(out.contains("B_{x}\\\\left(A_{1}"));
-        assert!(out.contains("\"parametricDomain\": { \"min\": \"0\", \"max\": \"1\" }"));
+        assert!(out.contains("\"parametricDomain\": { \"min\": \"0\", \"max\": \"99\" }"));
         assert!(out.contains("A_{1}=[(0,0)]"));
-        assert!(out.contains("Calc.setExpressions(exprs)"));
+        assert!(out.contains("Calc.setState(state)"));
+    }
+
+    #[test]
+    fn plot_domain_is_zero_to_99() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier(
+            "a",
+            1,
+            &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0), (2.0, 0.0, 3.0, 1.0, 4.0, 0.0)],
+        )];
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(out.contains("\"parametricDomain\": { \"min\": \"0\", \"max\": \"99\" }"));
+        assert!(!out.contains("\"max\": \"2\""));
+    }
+
+    #[test]
+    fn segment_data_lists_are_hidden() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+        let out = build_js_output(&curves, &groups, &[]);
+        let data = out.lines().find(|l| l.contains("A_{1}=")).unwrap();
+        assert!(data.contains("\"hidden\": true"));
+    }
+
+    #[test]
+    fn uses_setstate_so_folders_nest() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(out.contains("state.expressions.list = list"));
+        assert!(out.contains("Calc.setState(state)"));
+        assert!(!out.contains("Calc.setExpressions("));
+    }
+
+    #[test]
+    fn t_helper_lines_are_hidden_but_multiarg_helpers_are_not() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+        let tpl = vec![
+            "i\\left(t\\right)=\\operatorname{ceil}\\left(t\\right)".to_string(),
+            "B_{x}\\left(X_{1},X_{2},X_{3}\\right)=j\\left(t\\right)".to_string(),
+        ];
+
+        let out = build_js_output(&curves, &groups, &tpl);
+        let line_i = out.lines().find(|l| l.contains("\"id\": \"3\"")).unwrap();
+        assert!(line_i.contains("\"hidden\": true"));
+        let line_b = out.lines().find(|l| l.contains("\"id\": \"4\"")).unwrap();
+        assert!(!line_b.contains("\"hidden\": true"));
+    }
+
+    #[test]
+    fn fill_enabled_curve_emits_fill_on_plot_only() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let mut c = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        c.fill_enabled = true;
+        c.fill_color = [10, 20, 30, 128];
+        let curves = vec![c];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        let plot = out.lines().find(|l| l.contains("B_{x}\\\\left(A_{1}")).unwrap();
+        assert!(plot.contains("\"fill\": true"));
+        assert!(plot.contains("\"fillOpacity\": \"0.502\""));
+        let data = out.lines().find(|l| l.contains("A_{1}=")).unwrap();
+        assert!(!data.contains("\"fill\": true"));
+    }
+
+    #[test]
+    fn fill_disabled_curve_has_no_fill() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(!out.contains("\"fill\": true"));
     }
 
     #[test]

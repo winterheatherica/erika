@@ -102,7 +102,7 @@ pub struct App {
     pub(crate) show_axes: bool,
     pub(crate) show_handles_all: bool,
     pub(crate) show_left_panel: bool,
-    pub(crate) background: [u8; 3],
+    pub(crate) background: Option<[u8; 3]>,
 
     pub(crate) reference_image: Option<ReferenceImage>,
     pub(crate) image_drag_enabled: bool,
@@ -172,7 +172,7 @@ impl App {
             show_axes: true,
             show_handles_all: true,
             show_left_panel: true,
-            background: [245, 245, 250],
+            background: None,
             reference_image: None,
             image_drag_enabled: false,
             pending_fit_view: false,
@@ -771,7 +771,7 @@ impl App {
                 }
             }
             ColorPickTarget::Background => {
-                self.background = [rgba[0], rgba[1], rgba[2]];
+                self.background = Some([rgba[0], rgba[1], rgba[2]]);
             }
         }
         self.last_picked_color = Some(rgba);

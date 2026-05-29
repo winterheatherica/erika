@@ -70,7 +70,17 @@ impl App {
             }
             ui.separator();
             ui.label("BG:");
-            let _ = crate::ui_color::color_edit_hex_rgb(ui, "bg_hex", &mut self.background);
+            let mut transparent = self.background.is_none();
+            if ui
+                .checkbox(&mut transparent, "Transparent")
+                .on_hover_text("Transparent background (no fill)")
+                .changed()
+            {
+                self.background = if transparent { None } else { Some([245, 245, 250]) };
+            }
+            if let Some(bg) = self.background.as_mut() {
+                let _ = crate::ui_color::color_edit_hex_rgb(ui, "bg_hex", bg);
+            }
             let img_ready = self
                 .reference_image
                 .as_ref()
@@ -102,7 +112,7 @@ impl App {
                 let bg = if self.export_transparent {
                     None
                 } else {
-                    Some(self.background)
+                    self.background
                 };
                 let cfg = ExportConfig {
                     width: self.export_w,
@@ -129,7 +139,7 @@ impl App {
                 let bg = if self.export_transparent {
                     None
                 } else {
-                    Some(self.background)
+                    self.background
                 };
                 let cfg = SvgConfig {
                     width: self.export_w,

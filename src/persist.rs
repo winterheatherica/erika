@@ -23,7 +23,7 @@ pub struct Project {
     #[serde(default = "default_samples")]
     pub samples_per_segment: usize,
     #[serde(default = "default_bg")]
-    pub background: [u8; 3],
+    pub background: Option<[u8; 3]>,
     #[serde(default)]
     pub groups: Vec<Group>,
 }
@@ -34,8 +34,8 @@ fn default_version() -> u32 {
 fn default_samples() -> usize {
     32
 }
-fn default_bg() -> [u8; 3] {
-    [245, 245, 250]
+fn default_bg() -> Option<[u8; 3]> {
+    Some([245, 245, 250])
 }
 
 impl Project {

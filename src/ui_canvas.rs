@@ -10,11 +10,12 @@ impl App {
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
-        painter.rect_filled(
-            rect,
-            0.0,
-            Color32::from_rgb(self.background[0], self.background[1], self.background[2]),
-        );
+        match self.background {
+            Some(bg) => {
+                painter.rect_filled(rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+            }
+            None => draw_transparency_checker(&painter, rect),
+        }
 
         self.draw_reference_image(&painter, rect);
 
@@ -648,4 +649,22 @@ fn arc_length_dashes(pts: &[Pos2], pattern: &[f32]) -> Vec<Vec<Pos2>> {
         result.push(current);
     }
     result
+}
+
+fn draw_transparency_checker(painter: &egui::Painter, rect: Rect) {
+    let cell = (rect.width().max(rect.height()) / 48.0).clamp(10.0, 40.0);
+    painter.rect_filled(rect, 0.0, Color32::from_gray(250));
+    let dark = Color32::from_gray(220);
+    let cols = (rect.width() / cell).ceil() as i32;
+    let rows = (rect.height() / cell).ceil() as i32;
+    for r in 0..rows {
+        for c in 0..cols {
+            if (r + c) % 2 == 0 {
+                continue;
+            }
+            let min = Pos2::new(rect.left() + c as f32 * cell, rect.top() + r as f32 * cell);
+            let cell_rect = Rect::from_min_size(min, Vec2::new(cell, cell)).intersect(rect);
+            painter.rect_filled(cell_rect, 0.0, dark);
+        }
+    }
 }
