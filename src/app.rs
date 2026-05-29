@@ -101,6 +101,7 @@ pub struct App {
     pub(crate) show_grid: bool,
     pub(crate) show_axes: bool,
     pub(crate) show_handles_all: bool,
+    pub(crate) show_left_panel: bool,
     pub(crate) background: [u8; 3],
 
     pub(crate) reference_image: Option<ReferenceImage>,
@@ -170,6 +171,7 @@ impl App {
             show_grid: true,
             show_axes: true,
             show_handles_all: true,
+            show_left_panel: true,
             background: [245, 245, 250],
             reference_image: None,
             image_drag_enabled: false,
@@ -800,10 +802,12 @@ impl eframe::App for App {
         }
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.top_bar(ui));
-        egui::SidePanel::left("left_panel")
-            .default_width(400.0)
-            .min_width(320.0)
-            .show(ctx, |ui| self.left_panel(ui));
+        if self.show_left_panel {
+            egui::SidePanel::left("left_panel")
+                .default_width(400.0)
+                .min_width(320.0)
+                .show(ctx, |ui| self.left_panel(ui));
+        }
         egui::CentralPanel::default().show(ctx, |ui| self.canvas(ui));
 
         let undo = ctx.input_mut(|i| {
@@ -827,6 +831,12 @@ impl eframe::App for App {
                 egui::Key::S,
             ))
         });
+        let toggle_panel = ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::B,
+            ))
+        });
         let enter =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         let escape =
@@ -843,6 +853,9 @@ impl eframe::App for App {
         }
         if save {
             self.save_current();
+        }
+        if toggle_panel {
+            self.show_left_panel = !self.show_left_panel;
         }
         if enter && self.color_pick_target.is_none() && !self.curves.is_empty() {
             let sel = self.selected.min(self.curves.len() - 1);

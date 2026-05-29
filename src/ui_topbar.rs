@@ -16,6 +16,19 @@ use crate::tex_export::{TexConfig, export_tex};
 impl App {
     pub(crate) fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
+            let toggle_label = if self.show_left_panel {
+                "☰ Hide panel"
+            } else {
+                "☰ Show panel"
+            };
+            if ui
+                .button(toggle_label)
+                .on_hover_text("Toggle left panel (Ctrl+B)")
+                .clicked()
+            {
+                self.show_left_panel = !self.show_left_panel;
+            }
+            ui.separator();
             ui.label(egui::RichText::new("Erika").strong().size(16.0));
             ui.separator();
             if ui.button("💾 Save").clicked() {
