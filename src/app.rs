@@ -85,6 +85,7 @@ pub struct App {
     pub(crate) groups: Vec<Group>,
     pub(crate) next_group_id: u64,
     pub(crate) new_curve_group_id: Option<u64>,
+    pub(crate) active_group_id: Option<u64>,
 
     pub(crate) center_x: f32,
     pub(crate) center_y: f32,
@@ -156,6 +157,7 @@ impl App {
             groups: vec![default_group.clone()],
             next_group_id: 2,
             new_curve_group_id: Some(default_group.id),
+            active_group_id: Some(default_group.id),
             center_x: 0.0,
             center_y: 0.0,
             scale: 70.0,
@@ -548,6 +550,7 @@ impl App {
         }
         self.selected = 0;
         self.new_curve_group_id = Some(default_id);
+        self.active_group_id = Some(default_id);
         self.reference_image = p.reference_image.map(|mut i| {
             i.texture = None;
             i.load_error = None;
@@ -601,6 +604,23 @@ impl App {
         }
         if self.new_curve_group_id == Some(group_id) {
             self.new_curve_group_id = Some(fallback_id);
+        }
+        if self.active_group_id == Some(group_id) {
+            self.set_active_group(fallback_id);
+        }
+    }
+
+    pub(crate) fn set_active_group(&mut self, id: u64) {
+        self.active_group_id = Some(id);
+        self.new_curve_group_id = Some(id);
+        let sel_in_group = self
+            .curves
+            .get(self.selected)
+            .map_or(false, |c| c.group_id == Some(id));
+        if !sel_in_group {
+            if let Some(idx) = self.curves.iter().position(|c| c.group_id == Some(id)) {
+                self.selected = idx;
+            }
         }
     }
 

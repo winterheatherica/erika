@@ -36,25 +36,49 @@ impl App {
 
         if ui.button("+ Add group").clicked() {
             let id = self.add_group();
-            self.new_curve_group_id = Some(id);
+            self.set_active_group(id);
+        }
+
+        ui.label(
+            egui::RichText::new("Click the radio to pick the active folder. The curve list below shows only that folder.")
+                .small()
+                .weak(),
+        );
+
+        let active = self.active_group_id;
+        let mut counts: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+        for c in &self.curves {
+            if let Some(gid) = c.group_id {
+                *counts.entry(gid).or_insert(0) += 1;
+            }
         }
 
         let mut remove_group_id: Option<u64> = None;
+        let mut activate_group_id: Option<u64> = None;
         let can_delete = self.groups.len() > 1;
         for g in &mut self.groups {
             ui.horizontal(|ui| {
+                if ui
+                    .radio(active == Some(g.id), "")
+                    .on_hover_text("Make this the active folder")
+                    .clicked()
+                {
+                    activate_group_id = Some(g.id);
+                }
                 ui.label("📁");
                 ui.add(
                     egui::TextEdit::singleline(&mut g.name)
-                        .desired_width(110.0)
+                        .desired_width(96.0)
                         .hint_text("name"),
                 );
                 ui.label("param:");
                 ui.add(
                     egui::TextEdit::singleline(&mut g.tex_param)
-                        .desired_width(90.0)
+                        .desired_width(72.0)
                         .hint_text("e.g. A"),
                 );
+                let count = counts.get(&g.id).copied().unwrap_or(0);
+                ui.label(egui::RichText::new(format!("({count})")).small().weak());
                 let del = ui.add_enabled(can_delete, egui::Button::new("🗑").small());
                 let del = if can_delete {
                     del.on_hover_text("Delete group (curves reassigned to first remaining)")
@@ -65,6 +89,9 @@ impl App {
                     remove_group_id = Some(g.id);
                 }
             });
+        }
+        if let Some(id) = activate_group_id {
+            self.set_active_group(id);
         }
         if let Some(id) = remove_group_id {
             self.remove_group(id);
@@ -209,11 +236,13 @@ impl App {
                         CurveSet::new_ellipse(name, color, self.center_x, self.center_y)
                     }
                 };
-                new_curve.group_id = self
+                let target_group = self
                     .new_curve_group_id
                     .or_else(|| self.groups.first().map(|g| g.id));
+                new_curve.group_id = target_group;
                 self.curves.push(new_curve);
                 self.selected = self.curves.len() - 1;
+                self.active_group_id = target_group;
                 self.new_curve_name.clear();
             }
         });
@@ -225,13 +254,38 @@ impl App {
         let mut to_front: Option<usize> = None;
         let mut to_back: Option<usize> = None;
         let total = self.curves.len();
+        let active_group = self.active_group_id;
+        let active_count = self
+            .curves
+            .iter()
+            .filter(|c| c.group_id == active_group)
+            .count();
         ui.label(
-            egui::RichText::new("Layer order: top of list = behind, bottom = in front")
-                .small()
-                .weak(),
+            egui::RichText::new(
+                "Active folder only. Number = global layer (gaps = layers in other folders). Low = behind, high = in front.",
+            )
+            .small()
+            .weak(),
         );
+        if active_count == 0 {
+            ui.label(
+                egui::RichText::new("This folder is empty — add a curve above.")
+                    .small()
+                    .italics()
+                    .weak(),
+            );
+        }
         for (i, c) in self.curves.iter_mut().enumerate() {
+            if c.group_id != active_group {
+                continue;
+            }
             ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("{:>2}", i + 1))
+                        .monospace()
+                        .weak(),
+                )
+                .on_hover_text("Global layer position");
                 let _ = ui.color_edit_button_srgb(&mut c.color);
                 ui.checkbox(&mut c.visible, "");
                 let kind_tag = match c.kind {
@@ -325,6 +379,14 @@ impl App {
         }
         let sel = self.selected.min(self.curves.len() - 1);
         self.selected = sel;
+        if self.curves[sel].group_id != self.active_group_id {
+            ui.label(
+                egui::RichText::new("No curve selected in this folder.")
+                    .italics()
+                    .weak(),
+            );
+            return;
+        }
         let c = &mut self.curves[sel];
 
         ui.label(egui::RichText::new(format!("Edit: {}", c.name)).strong());
@@ -489,6 +551,9 @@ impl App {
             return;
         }
         let sel = self.selected.min(self.curves.len() - 1);
+        if self.curves[sel].group_id != self.active_group_id {
+            return;
+        }
         match self.curves[sel].kind {
             CurveKind::Bezier => self.bezier_points_section(ui, sel),
             CurveKind::Ellipse => self.ellipse_params_section(ui, sel),
