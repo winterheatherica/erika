@@ -125,6 +125,10 @@ pub struct App {
     pub(crate) image_drag_enabled: bool,
     pub(crate) pending_fit_view: bool,
 
+    pub(crate) show_gallery: bool,
+    pub(crate) gallery_search: String,
+    pub(crate) thumb_cache: std::collections::HashMap<PathBuf, Option<egui::TextureHandle>>,
+
     pub(crate) color_pick_target: Option<ColorPickTarget>,
     pub(crate) last_picked_color: Option<[u8; 4]>,
 
@@ -194,6 +198,9 @@ impl App {
             selected_image: 0,
             image_drag_enabled: false,
             pending_fit_view: false,
+            show_gallery: false,
+            gallery_search: String::new(),
+            thumb_cache: std::collections::HashMap::new(),
             color_pick_target: None,
             last_picked_color: None,
             export_name: "output".to_string(),
@@ -739,6 +746,7 @@ impl App {
             Ok(()) => format!("Saved project → {}", path.display()),
             Err(e) => format!("Save error: {e}"),
         });
+        self.thumb_cache.clear();
     }
 
     pub(crate) fn save_dialog(&mut self) {
@@ -764,6 +772,7 @@ impl App {
                 }
                 Err(e) => format!("Save error: {e}"),
             });
+            self.thumb_cache.clear();
         }
     }
 
@@ -778,17 +787,33 @@ impl App {
             .unwrap_or_else(|| ensure_dir(PROJECT_DIR));
         dlg = dlg.set_directory(&default_dir);
         if let Some(path) = dlg.pick_file() {
-            match Project::load_from(&path) {
-                Ok(proj) => {
-                    self.apply_project(proj);
-                    self.current_project_path = Some(path.clone());
-                    self.last_msg = Some(format!("Loaded project ← {}", path.display()));
-                }
-                Err(e) => {
-                    self.last_msg = Some(format!("Load error: {e}"));
-                }
+            self.load_project(path);
+        }
+    }
+
+    pub(crate) fn load_project(&mut self, path: PathBuf) {
+        match Project::load_from(&path) {
+            Ok(proj) => {
+                self.apply_project(proj);
+                self.current_project_path = Some(path.clone());
+                self.last_msg = Some(format!("Loaded project ← {}", path.display()));
+            }
+            Err(e) => {
+                self.last_msg = Some(format!("Load error: {e}"));
             }
         }
+    }
+
+    pub(crate) fn saved_projects(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = std::fs::read_dir(PROJECT_DIR)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        out.sort();
+        out
     }
 
     pub(crate) fn load_image_dialog(&mut self) {
@@ -887,6 +912,10 @@ impl eframe::App for App {
                 .show(ctx, |ui| self.left_panel(ui));
         }
         egui::CentralPanel::default().show(ctx, |ui| self.canvas(ui));
+
+        if self.show_gallery {
+            self.gallery_window(ctx);
+        }
 
         let undo = ctx.input_mut(|i| {
             i.consume_shortcut(&egui::KeyboardShortcut::new(

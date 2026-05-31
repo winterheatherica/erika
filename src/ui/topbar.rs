@@ -57,8 +57,8 @@ impl App {
                 self.save_dialog();
                 ui.close_menu();
             }
-            if ui.button("📂 Load").clicked() {
-                self.load_dialog();
+            if ui.button("📂 Load…").clicked() {
+                self.show_gallery = true;
                 ui.close_menu();
             }
         });

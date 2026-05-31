@@ -14,19 +14,26 @@ pub struct ExportConfig<'a> {
     pub path: &'a Path,
 }
 
-pub fn export_png(curves: &[CurveSet], cfg: &ExportConfig) -> Result<(), String> {
-    let mut pixmap = Pixmap::new(cfg.width, cfg.height)
-        .ok_or_else(|| format!("Failed to allocate {}x{} pixmap", cfg.width, cfg.height))?;
-    if let Some(bg) = cfg.background {
+pub fn render_pixmap(
+    curves: &[CurveSet],
+    width: u32,
+    height: u32,
+    background: Option<[u8; 3]>,
+    padding_fraction: f32,
+    samples_per_segment: usize,
+) -> Result<Pixmap, String> {
+    let mut pixmap = Pixmap::new(width, height)
+        .ok_or_else(|| format!("Failed to allocate {width}x{height} pixmap"))?;
+    if let Some(bg) = background {
         pixmap.fill(Color::from_rgba8(bg[0], bg[1], bg[2], 255));
     }
 
-    let bounds = compute_bounds(curves, cfg.samples_per_segment.max(8));
+    let bounds = compute_bounds(curves, samples_per_segment.max(8));
     let Some((mut min_x, mut min_y, mut max_x, mut max_y)) = bounds else {
         return Err("No visible curves with content to export".into());
     };
     let span = (max_x - min_x).max(max_y - min_y).max(1e-6);
-    let pad = span * cfg.padding_fraction.max(0.0);
+    let pad = span * padding_fraction.max(0.0);
     min_x -= pad;
     min_y -= pad;
     max_x += pad;
@@ -34,12 +41,12 @@ pub fn export_png(curves: &[CurveSet], cfg: &ExportConfig) -> Result<(), String>
 
     let span_x = (max_x - min_x).max(1e-6);
     let span_y = (max_y - min_y).max(1e-6);
-    let sx = cfg.width as f32 / span_x;
-    let sy = cfg.height as f32 / span_y;
+    let sx = width as f32 / span_x;
+    let sy = height as f32 / span_y;
     let s = sx.min(sy);
-    let offset_x = (cfg.width as f32 - span_x * s) * 0.5 - min_x * s;
-    let offset_y = (cfg.height as f32 - span_y * s) * 0.5 - min_y * s;
-    let h = cfg.height as f32;
+    let offset_x = (width as f32 - span_x * s) * 0.5 - min_x * s;
+    let offset_y = (height as f32 - span_y * s) * 0.5 - min_y * s;
+    let h = height as f32;
     let world_to_px = |p: P| -> (f32, f32) { (offset_x + p.x * s, h - (offset_y + p.y * s)) };
 
     for c in curves {
@@ -51,6 +58,18 @@ pub fn export_png(curves: &[CurveSet], cfg: &ExportConfig) -> Result<(), String>
             CurveKind::Ellipse => emit_ellipse(&mut pixmap, c, &world_to_px, s),
         }
     }
+    Ok(pixmap)
+}
+
+pub fn export_png(curves: &[CurveSet], cfg: &ExportConfig) -> Result<(), String> {
+    let pixmap = render_pixmap(
+        curves,
+        cfg.width,
+        cfg.height,
+        cfg.background,
+        cfg.padding_fraction,
+        cfg.samples_per_segment,
+    )?;
 
     if let Some(parent) = cfg.path.parent() {
         if !parent.as_os_str().is_empty() {
