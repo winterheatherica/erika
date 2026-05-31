@@ -1,9 +1,7 @@
 use std::path::Path;
 
 use crate::model::curve::{CurveKind, CurveSet, Group};
-use crate::export::tex::{
-    bezier_data_latex, bezier_plot_latex, bezier_plot_latex_restricted, ellipse_latex,
-};
+use crate::export::tex::{bezier_data_latex, bezier_plot_latex_restricted, ellipse_latex};
 
 pub struct JsConfig<'a> {
     pub path: &'a Path,
@@ -57,6 +55,7 @@ enum Item {
         parametric_max: Option<usize>,
         hidden: bool,
         fill_opacity: Option<f32>,
+        lines: bool,
     },
     Slider {
         id: String,
@@ -97,6 +96,7 @@ fn build_js_output_opts(
             parametric_max: None,
             hidden: is_plottable_t_helper(line),
             fill_opacity: None,
+            lines: true,
         });
     }
 
@@ -141,88 +141,129 @@ fn build_js_output_opts(
             parametric_max: None,
             hidden: false,
             fill_opacity: None,
+            lines: true,
         });
     }
 
+    struct CurvePlot {
+        stroke_color: String,
+        latex: String,
+        parametric_max: Option<usize>,
+        data_latex: Vec<String>,
+        fill: Option<(String, f32, String)>,
+    }
+
+    let mut folder_plan: Vec<(String, Vec<CurvePlot>)> = Vec::new();
     for (f, (gi, members)) in folders.iter().enumerate() {
         let g = &groups[*gi];
-        let folder_id = fresh_id(&mut next_id);
-        items.push(Item::Folder {
-            id: folder_id.clone(),
-            title: g.name.clone(),
-        });
-
         let folder_units: usize = members.iter().map(|&ci| curves[ci].draw_units()).sum();
         let mut offset = 0usize;
-
         let mut bez_idx = 0usize;
-        let idx_for: Vec<Option<usize>> = members
-            .iter()
-            .map(|&ci| {
-                if curves[ci].is_bezier() {
-                    let v = bez_idx;
-                    bez_idx += 1;
-                    Some(v)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut plots: Vec<CurvePlot> = Vec::new();
 
-        for (k, &ci) in members.iter().enumerate() {
+        for &ci in members {
             let c = &curves[ci];
-            let color = hex(c.color);
-            match c.kind {
+            let stroke_color = hex(c.color);
+            let plot = match c.kind {
                 CurveKind::Bezier => {
-                    let idx = idx_for[k].unwrap();
-                    let latex = if timelapse {
-                        let gate = folder_bezier_gate(f, folder_units, offset);
-                        bezier_plot_latex_restricted(&g.tex_param, idx, &gate)
+                    let idx = bez_idx;
+                    bez_idx += 1;
+                    let gate = if timelapse {
+                        folder_bezier_gate(f, folder_units, offset)
                     } else {
-                        bezier_plot_latex(&g.tex_param, idx)
+                        String::new()
                     };
-                    items.push(Item::Expr {
-                        id: fresh_id(&mut next_id),
-                        folder_id: folder_id.clone(),
-                        color,
+                    let latex = bezier_plot_latex_restricted(&g.tex_param, idx, &gate);
+                    let data_latex = bezier_data_latex(c, &g.tex_param, idx);
+                    let fill = fill_opacity_for(c)
+                        .map(|op| (fill_hex(c), op, bezier_plot_latex_restricted(&g.tex_param, idx, "")));
+                    CurvePlot {
+                        stroke_color,
                         latex,
                         parametric_max: Some(PLOT_DOMAIN_MAX),
-                        hidden: false,
-                        fill_opacity: fill_opacity_for(c),
-                    });
+                        data_latex,
+                        fill,
+                    }
                 }
                 CurveKind::Ellipse => {
-                    let mut latex = ellipse_latex(c);
-                    if timelapse {
-                        latex.push_str(&folder_ellipse_gate(f, folder_units, offset));
-                    }
-                    items.push(Item::Expr {
-                        id: fresh_id(&mut next_id),
-                        folder_id: folder_id.clone(),
-                        color,
+                    let gate = if timelapse {
+                        folder_ellipse_gate(f, folder_units, offset)
+                    } else {
+                        String::new()
+                    };
+                    let latex = format!("{}{}", ellipse_latex(c), gate);
+                    let fill = fill_opacity_for(c).map(|op| (fill_hex(c), op, ellipse_fill_latex(c)));
+                    CurvePlot {
+                        stroke_color,
                         latex,
                         parametric_max: None,
+                        data_latex: Vec::new(),
+                        fill,
+                    }
+                }
+            };
+            plots.push(plot);
+            offset += c.draw_units();
+        }
+        folder_plan.push((g.name.clone(), plots));
+    }
+
+    if folder_plan
+        .iter()
+        .any(|(_, plots)| plots.iter().any(|p| p.fill.is_some()))
+    {
+        let fill_folder = fresh_id(&mut next_id);
+        items.push(Item::Folder {
+            id: fill_folder.clone(),
+            title: "Fill".to_string(),
+        });
+        for (_, plots) in &folder_plan {
+            for p in plots {
+                if let Some((color, opacity, latex)) = &p.fill {
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: fill_folder.clone(),
+                        color: color.clone(),
+                        latex: latex.clone(),
+                        parametric_max: p.parametric_max,
                         hidden: false,
-                        fill_opacity: fill_opacity_for(c),
+                        fill_opacity: Some(*opacity),
+                        lines: false,
                     });
                 }
             }
-            offset += c.draw_units();
         }
+    }
 
-        for (k, &ci) in members.iter().enumerate() {
-            let Some(idx) = idx_for[k] else { continue };
-            let c = &curves[ci];
-            let color = hex(c.color);
-            for latex in bezier_data_latex(c, &g.tex_param, idx) {
+    for (name, plots) in &folder_plan {
+        let folder_id = fresh_id(&mut next_id);
+        items.push(Item::Folder {
+            id: folder_id.clone(),
+            title: name.clone(),
+        });
+        for p in plots {
+            items.push(Item::Expr {
+                id: fresh_id(&mut next_id),
+                folder_id: folder_id.clone(),
+                color: p.stroke_color.clone(),
+                latex: p.latex.clone(),
+                parametric_max: p.parametric_max,
+                hidden: false,
+                fill_opacity: None,
+                lines: true,
+            });
+        }
+        for p in plots {
+            for latex in &p.data_latex {
                 items.push(Item::Expr {
                     id: fresh_id(&mut next_id),
                     folder_id: folder_id.clone(),
-                    color: color.clone(),
-                    latex,
+                    color: p.stroke_color.clone(),
+                    latex: latex.clone(),
                     parametric_max: None,
                     hidden: true,
                     fill_opacity: None,
+                    lines: true,
                 });
             }
         }
@@ -289,6 +330,18 @@ fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
+fn fill_hex(c: &CurveSet) -> String {
+    hex([c.fill_color[0], c.fill_color[1], c.fill_color[2]])
+}
+
+fn ellipse_fill_latex(c: &CurveSet) -> String {
+    let s = ellipse_latex(c);
+    match s.strip_suffix("=1") {
+        Some(base) => format!("{base}\\le1"),
+        None => s,
+    }
+}
+
 fn js_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for ch in s.chars() {
@@ -320,6 +373,7 @@ fn render_js(items: &[Item]) -> String {
                 parametric_max,
                 hidden,
                 fill_opacity,
+                lines,
             } => {
                 let hidden_attr = if *hidden { ", \"hidden\": true" } else { "" };
                 let domain = match parametric_max {
@@ -332,15 +386,17 @@ fn render_js(items: &[Item]) -> String {
                     Some(op) => format!(", \"fill\": true, \"fillOpacity\": \"{:.3}\"", op),
                     None => String::new(),
                 };
+                let lines_attr = if *lines { "" } else { ", \"lines\": false" };
                 format!(
-                    "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"{}\"{}, \"latex\": \"{}\"{}{} }}",
+                    "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"{}\"{}, \"latex\": \"{}\"{}{}{} }}",
                     id,
                     folder_id,
                     color,
                     hidden_attr,
                     js_escape(latex),
                     domain,
-                    fill_attr
+                    fill_attr,
+                    lines_attr
                 )
             }
             Item::Slider {
@@ -481,19 +537,65 @@ mod tests {
     }
 
     #[test]
-    fn fill_enabled_curve_emits_fill_on_plot_only() {
+    fn fill_splits_into_fill_folder_and_stroke_only_group() {
         let groups = vec![Group::new(1, "Face", "A")];
         let mut c = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        c.color = [200, 100, 50];
         c.fill_enabled = true;
         c.fill_color = [10, 20, 30, 128];
         let curves = vec![c];
 
         let out = build_js_output(&curves, &groups, &[]);
-        let plot = out.lines().find(|l| l.contains("B_{x}\\\\left(A_{1}")).unwrap();
-        assert!(plot.contains("\"fill\": true"));
-        assert!(plot.contains("\"fillOpacity\": \"0.502\""));
-        let data = out.lines().find(|l| l.contains("A_{1}=")).unwrap();
-        assert!(!data.contains("\"fill\": true"));
+
+        assert!(out.contains("\"title\": \"Fill\""));
+        let fill = out
+            .lines()
+            .find(|l| l.contains("\"lines\": false"))
+            .expect("fill clone");
+        assert!(fill.contains("\"fill\": true"));
+        assert!(fill.contains("\"fillOpacity\": \"0.502\""));
+        assert!(fill.contains("\"color\": \"#0a141e\""));
+        assert!(fill.contains("B_{x}\\\\left(A_{1}"));
+
+        let stroke = out
+            .lines()
+            .find(|l| l.contains("B_{x}\\\\left(A_{1}") && !l.contains("\"lines\": false"))
+            .expect("stroke plot");
+        assert!(!stroke.contains("\"fill\": true"));
+        assert!(stroke.contains("\"color\": \"#c86432\""));
+    }
+
+    #[test]
+    fn fill_folder_renders_behind_stroke_folders() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let mut c = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        c.fill_enabled = true;
+        let curves = vec![c];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        let fill_pos = out.find("\"title\": \"Fill\"").expect("Fill folder");
+        let face_pos = out.find("\"title\": \"Face\"").expect("Face folder");
+        assert!(fill_pos < face_pos, "Fill folder should be emitted first (behind)");
+    }
+
+    #[test]
+    fn timelapse_gates_strokes_but_not_fills() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let mut c = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        c.fill_enabled = true;
+        let curves = vec![c];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        let fill = out
+            .lines()
+            .find(|l| l.contains("\"lines\": false"))
+            .expect("fill clone");
+        assert!(!fill.contains("q\\\\left("), "fills must not be gated");
+        let stroke = out
+            .lines()
+            .find(|l| l.contains("B_{x}\\\\left(A_{1}") && !l.contains("\"lines\": false"))
+            .expect("stroke plot");
+        assert!(stroke.contains("q\\\\left(0,1\\\\right)"), "strokes stay gated");
     }
 
     #[test]
