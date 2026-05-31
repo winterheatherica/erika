@@ -147,8 +147,6 @@ pub(crate) fn bezier_data_latex(c: &CurveSet, tex_param: &str, idx: usize) -> Ve
 }
 
 fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
-    // Drop whitespace so a param like "Right Eye" yields R_{ightEye...}, not R_{ight Eye...}
-    // (spaces inside a Desmos subscript are not valid variable-name characters).
     let cleaned: String = tex_param.chars().filter(|c| !c.is_whitespace()).collect();
     let mut chars = cleaned.chars();
     let letter = chars.next().unwrap_or('A');

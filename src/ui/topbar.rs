@@ -15,29 +15,57 @@ use crate::export::tex::{TexConfig, export_tex};
 
 impl App {
     pub(crate) fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            let toggle_label = if self.show_left_panel {
-                "☰ Hide panel"
-            } else {
-                "☰ Show panel"
-            };
+        egui::menu::bar(ui, |ui| {
+            if !self.show_top_bar {
+                if ui
+                    .button("▾ Toolbar")
+                    .on_hover_text("Show the toolbar")
+                    .clicked()
+                {
+                    self.show_top_bar = true;
+                }
+                return;
+            }
+
             if ui
-                .button(toggle_label)
-                .on_hover_text("Toggle left panel (Ctrl+B)")
+                .button("▴")
+                .on_hover_text("Hide the toolbar")
                 .clicked()
             {
-                self.show_left_panel = !self.show_left_panel;
+                self.show_top_bar = false;
             }
-            ui.separator();
             ui.label(egui::RichText::new("Erika").strong().size(16.0));
             ui.separator();
+
+            self.file_menu(ui);
+            self.edit_menu(ui);
+            self.view_menu(ui);
+            self.export_menu(ui);
+
+            let msg = self.last_msg.clone();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(msg) = &msg {
+                    ui.label(egui::RichText::new(msg).color(Color32::from_rgb(60, 100, 60)));
+                }
+            });
+        });
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("File", |ui| {
             if ui.button("💾 Save").clicked() {
                 self.save_dialog();
+                ui.close_menu();
             }
             if ui.button("📂 Load").clicked() {
                 self.load_dialog();
+                ui.close_menu();
             }
-            ui.separator();
+        });
+    }
+
+    fn edit_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Edit", |ui| {
             let undo_enabled =
                 !self.undo_stack.is_empty() || self.curves != self.last_committed_curves;
             let redo_enabled = !self.redo_stack.is_empty();
@@ -47,6 +75,7 @@ impl App {
                 .clicked()
             {
                 self.undo();
+                ui.close_menu();
             }
             if ui
                 .add_enabled(redo_enabled, egui::Button::new("↷ Redo"))
@@ -54,22 +83,39 @@ impl App {
                 .clicked()
             {
                 self.redo();
+                ui.close_menu();
             }
             ui.separator();
+            ui.checkbox(&mut self.link_continuity, "Link S3[i]=S1[i+1]");
+            ui.horizontal(|ui| {
+                ui.label("Samples/seg:");
+                ui.add(egui::DragValue::new(&mut self.samples_per_segment).range(4..=512));
+            });
+        });
+    }
+
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("View", |ui| {
             ui.checkbox(&mut self.show_grid, "Grid");
             ui.checkbox(&mut self.show_axes, "Axes");
             ui.checkbox(&mut self.show_handles_all, "Handles");
-            ui.checkbox(&mut self.link_continuity, "Link S3[i]=S1[i+1]");
-            ui.separator();
-            ui.label("Samples/seg:");
-            ui.add(egui::DragValue::new(&mut self.samples_per_segment).range(4..=512));
             ui.separator();
             if ui.button("Fit view").clicked() {
                 let size = ui.ctx().screen_rect().size();
                 self.fit_to_curves(size);
+                ui.close_menu();
+            }
+            let panel_label = if self.show_left_panel {
+                "Hide left panel"
+            } else {
+                "Show left panel"
+            };
+            if ui.button(panel_label).on_hover_text("Ctrl+B").clicked() {
+                self.show_left_panel = !self.show_left_panel;
+                ui.close_menu();
             }
             ui.separator();
-            ui.label("BG:");
+            ui.label(egui::RichText::new("Background").strong());
             let mut transparent = self.background.is_none();
             if ui
                 .checkbox(&mut transparent, "Transparent")
@@ -92,21 +138,27 @@ impl App {
                 img_ready,
             );
         });
+    }
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label("PNG:");
+    fn export_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Export", |ui| {
+            ui.label(egui::RichText::new("PNG").strong());
             ui.add(
                 egui::TextEdit::singleline(&mut self.export_path)
-                    .desired_width(160.0)
+                    .desired_width(200.0)
                     .hint_text("output.png"),
             );
-            ui.label("W");
-            ui.add(egui::DragValue::new(&mut self.export_w).range(64..=8192));
-            ui.label("H");
-            ui.add(egui::DragValue::new(&mut self.export_h).range(64..=8192));
-            ui.checkbox(&mut self.export_transparent, "Transparent");
-            ui.label("samples:");
-            ui.add(egui::DragValue::new(&mut self.export_samples).range(8..=512));
+            ui.horizontal(|ui| {
+                ui.label("W");
+                ui.add(egui::DragValue::new(&mut self.export_w).range(64..=8192));
+                ui.label("H");
+                ui.add(egui::DragValue::new(&mut self.export_h).range(64..=8192));
+            });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.export_transparent, "Transparent");
+                ui.label("samples:");
+                ui.add(egui::DragValue::new(&mut self.export_samples).range(8..=512));
+            });
             if ui.button("Export PNG").clicked() {
                 let path = build_dynamic_path(&self.export_path, PNG_EXPORT_DIR, "png");
                 let bg = if self.export_transparent {
@@ -126,12 +178,14 @@ impl App {
                     Ok(()) => format!("Exported PNG → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
+                ui.close_menu();
             }
+
             ui.separator();
-            ui.label("SVG:");
+            ui.label(egui::RichText::new("SVG").strong());
             ui.add(
                 egui::TextEdit::singleline(&mut self.svg_export_path)
-                    .desired_width(160.0)
+                    .desired_width(200.0)
                     .hint_text("output.svg"),
             );
             if ui.button("Export SVG").clicked() {
@@ -152,12 +206,14 @@ impl App {
                     Ok(()) => format!("Exported SVG → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
+                ui.close_menu();
             }
+
             ui.separator();
-            ui.label("TEX:");
+            ui.label(egui::RichText::new("TEX").strong());
             ui.add(
                 egui::TextEdit::singleline(&mut self.tex_export_path)
-                    .desired_width(160.0)
+                    .desired_width(200.0)
                     .hint_text("output.tex"),
             );
             if ui.button("Export TEX").clicked() {
@@ -171,19 +227,20 @@ impl App {
                     Ok(()) => format!("Exported TEX → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
+                ui.close_menu();
             }
+
             ui.separator();
-            ui.label("JS:");
+            ui.label(egui::RichText::new("JS (Desmos)").strong());
             ui.add(
                 egui::TextEdit::singleline(&mut self.js_export_path)
-                    .desired_width(160.0)
+                    .desired_width(200.0)
                     .hint_text("output.js"),
             );
-            ui.checkbox(&mut self.js_timelapse, "Time-lapse")
-                .on_hover_text(
-                    "Animate the drawing in creation order with a play slider (T). \
-                     Speed follows the Time-lapse Duration in the left panel.",
-                );
+            ui.checkbox(&mut self.js_timelapse, "Time-lapse").on_hover_text(
+                "Animate the drawing folder by folder with a play slider (S). \
+                 Speed follows the Time-lapse Duration in the left panel.",
+            );
             if ui.button("Export JS").clicked() {
                 let path = build_dynamic_path(&self.js_export_path, JS_EXPORT_DIR, "js");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
@@ -197,9 +254,7 @@ impl App {
                     Ok(()) => format!("Exported JS → {}", path.display()),
                     Err(e) => format!("Error: {e}"),
                 });
-            }
-            if let Some(msg) = &self.last_msg {
-                ui.label(egui::RichText::new(msg).color(Color32::from_rgb(60, 100, 60)));
+                ui.close_menu();
             }
         });
     }

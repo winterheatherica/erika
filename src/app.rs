@@ -102,6 +102,7 @@ pub struct App {
     pub(crate) show_axes: bool,
     pub(crate) show_handles_all: bool,
     pub(crate) show_left_panel: bool,
+    pub(crate) show_top_bar: bool,
     pub(crate) background: Option<[u8; 3]>,
 
     pub(crate) reference_image: Option<ReferenceImage>,
@@ -173,6 +174,7 @@ impl App {
             show_axes: true,
             show_handles_all: true,
             show_left_panel: true,
+            show_top_bar: true,
             background: None,
             reference_image: None,
             image_drag_enabled: false,
