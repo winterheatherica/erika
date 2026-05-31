@@ -68,6 +68,7 @@ enum Item {
     },
 }
 
+#[cfg(test)]
 fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[String]) -> String {
     build_js_output_opts(curves, groups, template_lines, false, 5.0)
 }

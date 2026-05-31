@@ -220,21 +220,6 @@ impl App {
                 Color32::from_gray(60),
             );
         }
-
-        let hint = if picking {
-            "color-pick mode • click on the reference image to sample • Esc to cancel"
-        } else if self.image_drag_enabled {
-            "image drag ON • drag handle = move • right/middle = pan • scroll = zoom • Enter = add segment • Ctrl+Z undo"
-        } else {
-            "drag handle = move • right/middle = pan • scroll = zoom • Enter = add segment • Ctrl+Z undo"
-        };
-        painter.text(
-            rect.right_bottom() + Vec2::new(-8.0, -6.0),
-            egui::Align2::RIGHT_BOTTOM,
-            hint,
-            egui::FontId::proportional(11.0),
-            Color32::from_gray(140),
-        );
     }
 
     fn draw_curve(&self, painter: &egui::Painter, rect: Rect, c: &CurveSet) {
