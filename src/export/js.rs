@@ -100,7 +100,7 @@ fn build_js_output_opts(
         });
     }
 
-    let folders: Vec<(usize, Vec<usize>)> = groups
+    let mut folders: Vec<(usize, Vec<usize>)> = groups
         .iter()
         .enumerate()
         .filter_map(|(gi, _)| {
@@ -113,6 +113,8 @@ fn build_js_output_opts(
             (!members.is_empty()).then_some((gi, members))
         })
         .collect();
+
+    folders.sort_by_key(|(_, members)| members[0]);
 
     if timelapse {
         let folder_count = folders.len();
@@ -511,6 +513,22 @@ mod tests {
         let out = build_js_output(&curves, &groups, &[]);
         assert!(out.contains("\"title\": \"Used\""));
         assert!(!out.contains("\"title\": \"Empty\""));
+    }
+
+    #[test]
+    fn folders_emit_in_layer_order_bottom_curve_first() {
+        let groups = vec![Group::new(1, "Top", "T"), Group::new(2, "Bottom", "B")];
+        let bottom = bezier("bottom", 2, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let top = bezier("top", 1, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let curves = vec![bottom, top];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        let bottom_pos = out.find("\"title\": \"Bottom\"").expect("Bottom folder");
+        let top_pos = out.find("\"title\": \"Top\"").expect("Top folder");
+        assert!(
+            bottom_pos < top_pos,
+            "folder with the bottom-most curve should be emitted first"
+        );
     }
 
     #[test]
