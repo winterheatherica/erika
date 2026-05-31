@@ -112,6 +112,8 @@ impl App {
         );
         ui.checkbox(&mut self.edit_show_all_strokes, "Show all strokes");
         ui.checkbox(&mut self.edit_show_all_fills, "Show all fills");
+        ui.checkbox(&mut self.edit_hide_all_strokes, "Hide all strokes")
+            .on_hover_text("Wins over \"Show all strokes\" if both are checked.");
         ui.checkbox(&mut self.edit_hide_all_fills, "Hide all fills")
             .on_hover_text("Wins over \"Show all fills\" if both are checked.");
     }

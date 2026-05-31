@@ -142,6 +142,7 @@ pub struct App {
     pub(crate) edit_hide_control_polygon: bool,
     pub(crate) edit_show_all_strokes: bool,
     pub(crate) edit_show_all_fills: bool,
+    pub(crate) edit_hide_all_strokes: bool,
     pub(crate) edit_hide_all_fills: bool,
 }
 
@@ -202,6 +203,7 @@ impl App {
             edit_hide_control_polygon: false,
             edit_show_all_strokes: false,
             edit_show_all_fills: false,
+            edit_hide_all_strokes: false,
             edit_hide_all_fills: false,
         }
     }

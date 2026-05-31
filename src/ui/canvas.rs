@@ -233,7 +233,7 @@ impl App {
             )
         } else {
             (
-                c.stroke_visible || self.edit_show_all_strokes,
+                (c.stroke_visible || self.edit_show_all_strokes) && !self.edit_hide_all_strokes,
                 (c.fill_enabled || self.edit_show_all_fills) && !self.edit_hide_all_fills,
             )
         };
