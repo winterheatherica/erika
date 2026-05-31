@@ -53,13 +53,9 @@ impl App {
             if response.clicked() || response.drag_started_by(egui::PointerButton::Primary) {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let w = self.s2w(rect, pos);
-                    if let Some(img) = &self.reference_image {
-                        if let Some(rgba) = img.sample_at_world(w.x, w.y) {
-                            if let Some(target) = self.color_pick_target.take() {
-                                self.apply_picked_color(target, rgba);
-                            }
-                        } else {
-                            self.color_pick_target = None;
+                    if let Some(rgba) = self.sample_image_at(w.x, w.y) {
+                        if let Some(target) = self.color_pick_target.take() {
+                            self.apply_picked_color(target, rgba);
                         }
                     } else {
                         self.color_pick_target = None;
@@ -73,7 +69,7 @@ impl App {
             if let Some(pos) = response.interact_pointer_pos() {
                 let mut started = false;
                 if self.image_drag_enabled {
-                    if let Some(img) = &self.reference_image {
+                    if let Some(img) = self.reference_images.get(self.selected_image) {
                         if img.visible && !img.locked && self.image_hit(rect, pos) {
                             let img_screen_pos =
                                 self.w2s(rect, P::new(img.world_x, img.world_y));
@@ -97,7 +93,7 @@ impl App {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let new_screen = pos - self.drag_image_offset;
                     let top_left_world = self.s2w(rect, new_screen);
-                    if let Some(img) = self.reference_image.as_mut() {
+                    if let Some(img) = self.reference_images.get_mut(self.selected_image) {
                         img.world_x = top_left_world.x;
                         img.world_y = top_left_world.y - img.world_h;
                     }
@@ -196,20 +192,18 @@ impl App {
             let w = self.s2w(rect, pos);
             let mut text = format!("({:.3}, {:.3})  scale={:.1} px/u", w.x, w.y, self.scale);
             if picking {
-                if let Some(img) = &self.reference_image {
-                    if let Some(rgba) = img.sample_at_world(w.x, w.y) {
-                        text.push_str(&format!(
-                            "   pick: #{:02x}{:02x}{:02x}",
-                            rgba[0], rgba[1], rgba[2]
-                        ));
-                        let swatch = Color32::from_rgb(rgba[0], rgba[1], rgba[2]);
-                        let r = Rect::from_min_size(
-                            rect.left_top() + Vec2::new(8.0, 24.0),
-                            egui::vec2(18.0, 14.0),
-                        );
-                        painter.rect_filled(r, 2.0, swatch);
-                        painter.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::BLACK));
-                    }
+                if let Some(rgba) = self.sample_image_at(w.x, w.y) {
+                    text.push_str(&format!(
+                        "   pick: #{:02x}{:02x}{:02x}",
+                        rgba[0], rgba[1], rgba[2]
+                    ));
+                    let swatch = Color32::from_rgb(rgba[0], rgba[1], rgba[2]);
+                    let r = Rect::from_min_size(
+                        rect.left_top() + Vec2::new(8.0, 24.0),
+                        egui::vec2(18.0, 14.0),
+                    );
+                    painter.rect_filled(r, 2.0, swatch);
+                    painter.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::BLACK));
                 }
             }
             painter.text(
@@ -419,7 +413,7 @@ impl App {
     }
 
     fn image_hit(&self, rect: Rect, screen_pos: Pos2) -> bool {
-        let Some(img) = &self.reference_image else {
+        let Some(img) = self.selected_image_ref() else {
             return false;
         };
         if img.world_w <= 0.0 || img.world_h <= 0.0 {
@@ -432,29 +426,28 @@ impl App {
     }
 
     fn draw_reference_image(&self, painter: &egui::Painter, rect: Rect) {
-        let Some(img) = &self.reference_image else {
-            return;
-        };
-        if !img.visible {
-            return;
+        for img in &self.reference_images {
+            if !img.visible {
+                continue;
+            }
+            let Some(tex) = &img.texture else {
+                continue;
+            };
+            if img.world_w <= 0.0 || img.world_h <= 0.0 {
+                continue;
+            }
+            let tl = self.w2s(rect, P::new(img.world_x, img.world_y + img.world_h));
+            let br = self.w2s(rect, P::new(img.world_x + img.world_w, img.world_y));
+            let r = Rect::from_min_max(tl, br);
+            let alpha = (img.opacity.clamp(0.0, 1.0) * 255.0) as u8;
+            let tint = Color32::from_white_alpha(alpha);
+            painter.image(
+                tex.id(),
+                r,
+                Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+                tint,
+            );
         }
-        let Some(tex) = &img.texture else {
-            return;
-        };
-        if img.world_w <= 0.0 || img.world_h <= 0.0 {
-            return;
-        }
-        let tl = self.w2s(rect, P::new(img.world_x, img.world_y + img.world_h));
-        let br = self.w2s(rect, P::new(img.world_x + img.world_w, img.world_y));
-        let r = Rect::from_min_max(tl, br);
-        let alpha = (img.opacity.clamp(0.0, 1.0) * 255.0) as u8;
-        let tint = Color32::from_white_alpha(alpha);
-        painter.image(
-            tex.id(),
-            r,
-            Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
-            tint,
-        );
     }
 
     fn draw_grid(&self, painter: &egui::Painter, rect: Rect) {

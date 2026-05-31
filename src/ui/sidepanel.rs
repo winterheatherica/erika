@@ -419,10 +419,7 @@ impl App {
         });
 
         ui.label("Stroke");
-        let img_ready = self
-            .reference_image
-            .as_ref()
-            .map_or(false, |i| i.is_ready());
+        let img_ready = self.reference_images.iter().any(|i| i.is_ready());
         ui.horizontal(|ui| {
             ui.checkbox(&mut c.stroke_visible, "Show");
             let _ = crate::ui::color::color_edit_hex_rgb(ui, ("stroke_hex", sel), &mut c.color);
@@ -487,13 +484,16 @@ impl App {
     }
 
     fn image_section(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Reference image");
+        ui.heading("Reference images");
         ui.horizontal(|ui| {
             if ui.button("📷 Load image").clicked() {
                 self.load_image_dialog();
             }
-            if self.reference_image.is_some() && ui.button("Remove").clicked() {
-                self.reference_image = None;
+            if !self.reference_images.is_empty() && ui.button("Remove").clicked() {
+                self.reference_images.remove(self.selected_image);
+                if self.selected_image >= self.reference_images.len() {
+                    self.selected_image = self.reference_images.len().saturating_sub(1);
+                }
             }
         });
 
@@ -512,8 +512,25 @@ impl App {
             });
         }
 
-        let Some(img) = &mut self.reference_image else {
+        if self.reference_images.is_empty() {
             ui.label(egui::RichText::new("No image loaded").italics().weak());
+            return;
+        }
+
+        for i in 0..self.reference_images.len() {
+            let img = &self.reference_images[i];
+            let name = img
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("image")
+                .to_string();
+            let mark = if img.visible { "👁" } else { "🚫" };
+            ui.selectable_value(&mut self.selected_image, i, format!("{mark} {name}"));
+        }
+        ui.separator();
+
+        let Some(img) = self.reference_images.get_mut(self.selected_image) else {
             return;
         };
 

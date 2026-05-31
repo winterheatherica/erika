@@ -11,3 +11,5 @@ export/svg/*
 !export/svg/.gitkeep
 export/tex/*
 !export/tex/.gitkeep
+import/image/*
+!import/image/.gitkeep

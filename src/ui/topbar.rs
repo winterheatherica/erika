@@ -127,10 +127,7 @@ impl App {
             if let Some(bg) = self.background.as_mut() {
                 let _ = crate::ui::color::color_edit_hex_rgb(ui, "bg_hex", bg);
             }
-            let img_ready = self
-                .reference_image
-                .as_ref()
-                .map_or(false, |i| i.is_ready());
+            let img_ready = self.any_image_ready();
             pick_color_button_widget(
                 ui,
                 ColorPickTarget::Background,

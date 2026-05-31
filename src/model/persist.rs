@@ -19,6 +19,8 @@ pub struct Project {
     pub curves: Vec<CurveSet>,
     #[serde(default)]
     pub reference_image: Option<ReferenceImage>,
+    #[serde(default)]
+    pub reference_images: Vec<ReferenceImage>,
     pub camera: CameraState,
     #[serde(default = "default_samples")]
     pub samples_per_segment: usize,

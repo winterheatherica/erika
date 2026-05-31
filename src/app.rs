@@ -8,12 +8,27 @@ pub(crate) const PNG_EXPORT_DIR: &str = "./export/png";
 pub(crate) const SVG_EXPORT_DIR: &str = "./export/svg";
 pub(crate) const TEX_EXPORT_DIR: &str = "./export/tex";
 pub(crate) const JS_EXPORT_DIR: &str = "./export/js";
+pub(crate) const IMPORT_IMAGE_DIR: &str = "./import/image";
 pub(crate) const TEX_TEMPLATE_PATH: &str = "./template/art.tex";
 
 fn ensure_dir(p: impl AsRef<Path>) -> PathBuf {
     let pb = p.as_ref().to_path_buf();
     let _ = std::fs::create_dir_all(&pb);
     pb
+}
+
+fn copy_into_import(src: &Path) -> std::io::Result<PathBuf> {
+    let dir = ensure_dir(IMPORT_IMAGE_DIR);
+    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("png");
+    let mut dest = dir.join(format!("{stem}.{ext}"));
+    let mut n = 2;
+    while dest.exists() {
+        dest = dir.join(format!("{stem}-{n}.{ext}"));
+        n += 1;
+    }
+    std::fs::copy(src, &dest)?;
+    Ok(dest)
 }
 
 fn bijective_base26(mut n: usize) -> String {
@@ -105,7 +120,8 @@ pub struct App {
     pub(crate) show_top_bar: bool,
     pub(crate) background: Option<[u8; 3]>,
 
-    pub(crate) reference_image: Option<ReferenceImage>,
+    pub(crate) reference_images: Vec<ReferenceImage>,
+    pub(crate) selected_image: usize,
     pub(crate) image_drag_enabled: bool,
     pub(crate) pending_fit_view: bool,
 
@@ -174,7 +190,8 @@ impl App {
             show_left_panel: true,
             show_top_bar: true,
             background: None,
-            reference_image: None,
+            reference_images: Vec::new(),
+            selected_image: 0,
             image_drag_enabled: false,
             pending_fit_view: false,
             color_pick_target: None,
@@ -483,7 +500,7 @@ impl App {
                 any = true;
             }
         }
-        if let Some(img) = &self.reference_image {
+        for img in &self.reference_images {
             if img.visible && img.world_w > 0.0 && img.world_h > 0.0 {
                 min_x = min_x.min(img.world_x);
                 max_x = max_x.max(img.world_x + img.world_w);
@@ -507,13 +524,18 @@ impl App {
         Project {
             version: 1,
             curves: self.curves.clone(),
-            reference_image: self.reference_image.as_ref().map(|i| {
-                let mut clone = i.clone();
-                clone.texture = None;
-                clone.load_error = None;
-                clone.raw_rgba = None;
-                clone
-            }),
+            reference_image: None,
+            reference_images: self
+                .reference_images
+                .iter()
+                .map(|i| {
+                    let mut clone = i.clone();
+                    clone.texture = None;
+                    clone.load_error = None;
+                    clone.raw_rgba = None;
+                    clone
+                })
+                .collect(),
             camera: CameraState {
                 center_x: self.center_x,
                 center_y: self.center_y,
@@ -561,12 +583,17 @@ impl App {
         self.selected = 0;
         self.new_curve_group_id = Some(default_id);
         self.active_group_id = Some(default_id);
-        self.reference_image = p.reference_image.map(|mut i| {
+        let mut images = p.reference_images;
+        if let Some(legacy) = p.reference_image {
+            images.insert(0, legacy);
+        }
+        for i in &mut images {
             i.texture = None;
             i.load_error = None;
             i.raw_rgba = None;
-            i
-        });
+        }
+        self.reference_images = images;
+        self.selected_image = 0;
         self.center_x = p.camera.center_x;
         self.center_y = p.camera.center_y;
         self.scale = p.camera.scale;
@@ -777,9 +804,20 @@ impl App {
             }
         }
         if let Some(path) = dlg.pick_file() {
-            self.reference_image = Some(ReferenceImage::new(path.clone()));
+            let (local, msg) = match copy_into_import(&path) {
+                Ok(dest) => {
+                    let m = format!("Image loaded → {}", dest.display());
+                    (dest, m)
+                }
+                Err(e) => (
+                    path.clone(),
+                    format!("Copy to import failed ({e}); using original location"),
+                ),
+            };
+            self.reference_images.push(ReferenceImage::new(local));
+            self.selected_image = self.reference_images.len() - 1;
             self.pending_fit_view = true;
-            self.last_msg = Some(format!("Image queued ← {}", path.display()));
+            self.last_msg = Some(msg);
         }
     }
 
@@ -801,13 +839,31 @@ impl App {
         }
         self.last_picked_color = Some(rgba);
     }
+
+    pub(crate) fn selected_image_ref(&self) -> Option<&ReferenceImage> {
+        self.reference_images.get(self.selected_image)
+    }
+
+    pub(crate) fn any_image_ready(&self) -> bool {
+        self.reference_images.iter().any(|i| i.is_ready())
+    }
+
+    pub(crate) fn sample_image_at(&self, wx: f32, wy: f32) -> Option<[u8; 4]> {
+        self.reference_images.iter().rev().find_map(|img| {
+            if img.visible {
+                img.sample_at_world(wx, wy)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::light());
 
-        if let Some(img) = &mut self.reference_image {
+        for img in &mut self.reference_images {
             img.ensure_loaded(ctx, 10.0);
         }
 
@@ -815,10 +871,7 @@ impl eframe::App for App {
         self.tick_playback(ctx);
 
         if self.pending_fit_view {
-            let ready = self
-                .reference_image
-                .as_ref()
-                .map_or(false, |i| i.is_ready());
+            let ready = self.selected_image_ref().map_or(false, |i| i.is_ready());
             if ready {
                 let size = ctx.screen_rect().size();
                 self.fit_to_curves(size);
