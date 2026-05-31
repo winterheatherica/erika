@@ -1,7 +1,17 @@
 use std::path::{Path, PathBuf};
 
-pub fn build_dynamic_path(user_input: &str, default_dir: &str, default_ext: &str) -> PathBuf {
-    let parts = parse_user_input(user_input, default_dir, default_ext);
+pub fn build_named_path(name: &str, dir: &str, ext: &str) -> PathBuf {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("output")
+        .to_string();
+    let parts = UserPathParts {
+        dir: PathBuf::from(dir),
+        stem,
+        ext: ext.to_string(),
+    };
     let (y, m, d) = today_local_ymd();
     pick_next_available(&parts, y, m, d)
 }
@@ -10,28 +20,6 @@ struct UserPathParts {
     dir: PathBuf,
     stem: String,
     ext: String,
-}
-
-fn parse_user_input(user_input: &str, default_dir: &str, default_ext: &str) -> UserPathParts {
-    let p = Path::new(user_input);
-    let stem = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("output")
-        .to_string();
-    let ext = p
-        .extension()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(default_ext)
-        .to_string();
-    let dir = p
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(default_dir));
-    UserPathParts { dir, stem, ext }
 }
 
 fn pick_next_available(parts: &UserPathParts, y: i32, m: u32, d: u32) -> PathBuf {
@@ -63,34 +51,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_full_path() {
-        let p = parse_user_input("./export/png/output.png", "./default", "png");
-        assert_eq!(p.stem, "output");
-        assert_eq!(p.ext, "png");
-        assert_eq!(p.dir, PathBuf::from("./export/png"));
-    }
-
-    #[test]
-    fn parse_missing_extension_uses_default() {
-        let p = parse_user_input("./export/png/myart", "./default", "png");
-        assert_eq!(p.stem, "myart");
-        assert_eq!(p.ext, "png");
-    }
-
-    #[test]
-    fn parse_bare_stem_uses_defaults() {
-        let p = parse_user_input("myart", "./default", "png");
-        assert_eq!(p.stem, "myart");
-        assert_eq!(p.ext, "png");
-        assert_eq!(p.dir, PathBuf::from("./default"));
-    }
-
-    #[test]
-    fn parse_empty_input_uses_all_defaults() {
-        let p = parse_user_input("", "./default", "png");
-        assert_eq!(p.stem, "output");
-        assert_eq!(p.ext, "png");
-        assert_eq!(p.dir, PathBuf::from("./default"));
+    fn build_named_path_forces_dir_and_ext_keeps_stem() {
+        let tmp = std::env::temp_dir().join(format!("erika_named_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let dir = tmp.to_str().unwrap();
+        let p = build_named_path("some/where/myart.svg", dir, "png");
+        let name = p.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("myart-"), "stem kept: {name}");
+        assert!(name.ends_with(".png"), "ext forced: {name}");
+        assert_eq!(p.parent().unwrap(), tmp.as_path(), "dir forced");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

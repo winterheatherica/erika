@@ -8,7 +8,7 @@ use crate::app::{
     TEX_TEMPLATE_PATH,
 };
 use crate::export::js::{JsConfig, export_js};
-use crate::export::path::build_dynamic_path;
+use crate::export::path::build_named_path;
 use crate::export::png::{ExportConfig, export_png};
 use crate::export::svg::{SvgConfig, export_svg};
 use crate::export::tex::{TexConfig, export_tex};
@@ -142,12 +142,17 @@ impl App {
 
     fn export_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Export", |ui| {
-            ui.label(egui::RichText::new("PNG").strong());
-            ui.add(
-                egui::TextEdit::singleline(&mut self.export_path)
-                    .desired_width(200.0)
-                    .hint_text("output.png"),
-            );
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.export_name)
+                        .desired_width(160.0)
+                        .hint_text("output"),
+                );
+            });
+
+            ui.separator();
+            export_target(ui, "PNG", PNG_EXPORT_DIR, "png");
             ui.horizontal(|ui| {
                 ui.label("W");
                 ui.add(egui::DragValue::new(&mut self.export_w).range(64..=8192));
@@ -160,7 +165,7 @@ impl App {
                 ui.add(egui::DragValue::new(&mut self.export_samples).range(8..=512));
             });
             if ui.button("Export PNG").clicked() {
-                let path = build_dynamic_path(&self.export_path, PNG_EXPORT_DIR, "png");
+                let path = build_named_path(&self.export_name, PNG_EXPORT_DIR, "png");
                 let bg = if self.export_transparent {
                     None
                 } else {
@@ -182,14 +187,9 @@ impl App {
             }
 
             ui.separator();
-            ui.label(egui::RichText::new("SVG").strong());
-            ui.add(
-                egui::TextEdit::singleline(&mut self.svg_export_path)
-                    .desired_width(200.0)
-                    .hint_text("output.svg"),
-            );
+            export_target(ui, "SVG", SVG_EXPORT_DIR, "svg");
             if ui.button("Export SVG").clicked() {
-                let path = build_dynamic_path(&self.svg_export_path, SVG_EXPORT_DIR, "svg");
+                let path = build_named_path(&self.export_name, SVG_EXPORT_DIR, "svg");
                 let bg = if self.export_transparent {
                     None
                 } else {
@@ -210,14 +210,9 @@ impl App {
             }
 
             ui.separator();
-            ui.label(egui::RichText::new("TEX").strong());
-            ui.add(
-                egui::TextEdit::singleline(&mut self.tex_export_path)
-                    .desired_width(200.0)
-                    .hint_text("output.tex"),
-            );
+            export_target(ui, "TEX", TEX_EXPORT_DIR, "tex");
             if ui.button("Export TEX").clicked() {
-                let path = build_dynamic_path(&self.tex_export_path, TEX_EXPORT_DIR, "tex");
+                let path = build_named_path(&self.export_name, TEX_EXPORT_DIR, "tex");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
                 let cfg = TexConfig {
                     path: &path,
@@ -231,18 +226,13 @@ impl App {
             }
 
             ui.separator();
-            ui.label(egui::RichText::new("JS (Desmos)").strong());
-            ui.add(
-                egui::TextEdit::singleline(&mut self.js_export_path)
-                    .desired_width(200.0)
-                    .hint_text("output.js"),
-            );
+            export_target(ui, "JS (Desmos)", JS_EXPORT_DIR, "js");
             ui.checkbox(&mut self.js_timelapse, "Time-lapse").on_hover_text(
                 "Animate the drawing folder by folder with a play slider (S). \
                  Speed follows the Time-lapse Duration in the left panel.",
             );
             if ui.button("Export JS").clicked() {
-                let path = build_dynamic_path(&self.js_export_path, JS_EXPORT_DIR, "js");
+                let path = build_named_path(&self.export_name, JS_EXPORT_DIR, "js");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
                 let cfg = JsConfig {
                     path: &path,
@@ -258,6 +248,13 @@ impl App {
             }
         });
     }
+}
+
+fn export_target(ui: &mut egui::Ui, label: &str, dir: &str, ext: &str) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).strong());
+        ui.label(egui::RichText::new(format!("→  {dir}/….{ext}")).weak());
+    });
 }
 
 pub(crate) fn pick_color_button_widget(

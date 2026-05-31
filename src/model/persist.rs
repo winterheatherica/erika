@@ -26,6 +26,47 @@ pub struct Project {
     pub background: Option<[u8; 3]>,
     #[serde(default)]
     pub groups: Vec<Group>,
+    #[serde(default)]
+    pub export: ExportSettings,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ExportSettings {
+    #[serde(default = "default_export_name")]
+    pub name: String,
+    #[serde(default = "default_export_dim")]
+    pub width: u32,
+    #[serde(default = "default_export_dim")]
+    pub height: u32,
+    #[serde(default)]
+    pub transparent: bool,
+    #[serde(default = "default_export_samples")]
+    pub samples: usize,
+    #[serde(default)]
+    pub timelapse: bool,
+}
+
+impl Default for ExportSettings {
+    fn default() -> Self {
+        Self {
+            name: default_export_name(),
+            width: default_export_dim(),
+            height: default_export_dim(),
+            transparent: false,
+            samples: default_export_samples(),
+            timelapse: false,
+        }
+    }
+}
+
+fn default_export_name() -> String {
+    "output".to_string()
+}
+fn default_export_dim() -> u32 {
+    1024
+}
+fn default_export_samples() -> usize {
+    64
 }
 
 fn default_version() -> u32 {

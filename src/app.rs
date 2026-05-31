@@ -28,7 +28,7 @@ fn bijective_base26(mut n: usize) -> String {
 
 use crate::model::curve::{Arr, CurveSet, Group, P, PALETTE};
 use crate::model::image_ref::ReferenceImage;
-use crate::model::persist::{CameraState, Project};
+use crate::model::persist::{CameraState, ExportSettings, Project};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HandleId {
@@ -112,14 +112,11 @@ pub struct App {
     pub(crate) color_pick_target: Option<ColorPickTarget>,
     pub(crate) last_picked_color: Option<[u8; 4]>,
 
-    pub(crate) export_path: String,
+    pub(crate) export_name: String,
     pub(crate) export_w: u32,
     pub(crate) export_h: u32,
     pub(crate) export_transparent: bool,
     pub(crate) export_samples: usize,
-    pub(crate) svg_export_path: String,
-    pub(crate) tex_export_path: String,
-    pub(crate) js_export_path: String,
     pub(crate) js_timelapse: bool,
     pub(crate) last_msg: Option<String>,
 
@@ -181,14 +178,11 @@ impl App {
             pending_fit_view: false,
             color_pick_target: None,
             last_picked_color: None,
-            export_path: format!("{}/output.png", PNG_EXPORT_DIR),
+            export_name: "output".to_string(),
             export_w: 1024,
             export_h: 1024,
             export_transparent: false,
             export_samples: 64,
-            svg_export_path: format!("{}/output.svg", SVG_EXPORT_DIR),
-            tex_export_path: format!("{}/output.tex", TEX_EXPORT_DIR),
-            js_export_path: format!("{}/output.js", JS_EXPORT_DIR),
             js_timelapse: false,
             last_msg: None,
             new_curve_name: String::new(),
@@ -526,6 +520,14 @@ impl App {
             samples_per_segment: self.samples_per_segment,
             background: self.background,
             groups: self.groups.clone(),
+            export: ExportSettings {
+                name: self.export_name.clone(),
+                width: self.export_w,
+                height: self.export_h,
+                transparent: self.export_transparent,
+                samples: self.export_samples,
+                timelapse: self.js_timelapse,
+            },
         }
     }
 
@@ -568,6 +570,12 @@ impl App {
         self.scale = p.camera.scale;
         self.samples_per_segment = p.samples_per_segment;
         self.background = p.background;
+        self.export_name = p.export.name;
+        self.export_w = p.export.width;
+        self.export_h = p.export.height;
+        self.export_transparent = p.export.transparent;
+        self.export_samples = p.export.samples;
+        self.js_timelapse = p.export.timelapse;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.last_committed_curves = self.curves.clone();
