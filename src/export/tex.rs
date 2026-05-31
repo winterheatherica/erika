@@ -121,9 +121,13 @@ fn emit_bezier_data(out: &mut String, c: &CurveSet, tex_param: &str, idx: usize)
 }
 
 pub(crate) fn bezier_plot_latex(tex_param: &str, idx: usize) -> String {
+    bezier_plot_latex_restricted(tex_param, idx, "")
+}
+
+pub(crate) fn bezier_plot_latex_restricted(tex_param: &str, idx: usize, restriction: &str) -> String {
     let (letter, s1_sub, s2_sub, s3_sub) = subscript_parts(tex_param, idx);
     format!(
-        "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right),B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)"
+        "\\left(B_{{x}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right){restriction},B_{{y}}\\left({letter}_{{{s1_sub}}},{letter}_{{{s2_sub}}},{letter}_{{{s3_sub}}}\\right)\\right)"
     )
 }
 

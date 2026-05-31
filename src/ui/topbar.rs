@@ -179,12 +179,19 @@ impl App {
                     .desired_width(160.0)
                     .hint_text("output.js"),
             );
+            ui.checkbox(&mut self.js_timelapse, "Time-lapse")
+                .on_hover_text(
+                    "Animate the drawing in creation order with a play slider (T). \
+                     Speed follows the Time-lapse Duration in the left panel.",
+                );
             if ui.button("Export JS").clicked() {
                 let path = build_dynamic_path(&self.js_export_path, JS_EXPORT_DIR, "js");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
                 let cfg = JsConfig {
                     path: &path,
                     template_path: &template_path,
+                    timelapse: self.js_timelapse,
+                    duration_secs: self.playback_duration_secs,
                 };
                 self.last_msg = Some(match export_js(&self.curves, &self.groups, &cfg) {
                     Ok(()) => format!("Exported JS → {}", path.display()),

@@ -35,8 +35,6 @@ pub(crate) fn color_edit_hex_rgb(
     changed
 }
 
-/// Like [`color_edit_hex_rgb`] but with alpha. The field accepts `#rrggbb`
-/// (keeping the current alpha) or `#rrggbbaa`.
 pub(crate) fn color_edit_hex_rgba(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,

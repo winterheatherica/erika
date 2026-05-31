@@ -1,11 +1,15 @@
 use std::path::Path;
 
 use crate::model::curve::{CurveKind, CurveSet, Group};
-use crate::export::tex::{bezier_data_latex, bezier_plot_latex, ellipse_latex};
+use crate::export::tex::{
+    bezier_data_latex, bezier_plot_latex, bezier_plot_latex_restricted, ellipse_latex,
+};
 
 pub struct JsConfig<'a> {
     pub path: &'a Path,
     pub template_path: &'a Path,
+    pub timelapse: bool,
+    pub duration_secs: f32,
 }
 
 const PLOT_DOMAIN_MAX: usize = 99;
@@ -23,7 +27,13 @@ pub fn export_js(curves: &[CurveSet], groups: &[Group], cfg: &JsConfig) -> Resul
         .filter(|l| !l.is_empty())
         .collect();
 
-    let body = build_js_output(curves, groups, &template_lines);
+    let body = build_js_output_opts(
+        curves,
+        groups,
+        &template_lines,
+        cfg.timelapse,
+        cfg.duration_secs,
+    );
 
     if let Some(parent) = cfg.path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -48,9 +58,27 @@ enum Item {
         hidden: bool,
         fill_opacity: Option<f32>,
     },
+    Slider {
+        id: String,
+        folder_id: String,
+        latex: String,
+        min: String,
+        max: String,
+        period_ms: u64,
+    },
 }
 
 fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[String]) -> String {
+    build_js_output_opts(curves, groups, template_lines, false, 5.0)
+}
+
+fn build_js_output_opts(
+    curves: &[CurveSet],
+    groups: &[Group],
+    template_lines: &[String],
+    timelapse: bool,
+    duration_secs: f32,
+) -> String {
     let mut items: Vec<Item> = Vec::new();
     let mut next_id: u32 = 2;
 
@@ -71,22 +99,58 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
         });
     }
 
-    for (gi, g) in groups.iter().enumerate() {
-        let members: Vec<usize> = curves
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| group_index_of(c, groups) == gi && is_exportable(c))
-            .map(|(i, _)| i)
-            .collect();
-        if members.is_empty() {
-            continue;
-        }
+    let folders: Vec<(usize, Vec<usize>)> = groups
+        .iter()
+        .enumerate()
+        .filter_map(|(gi, _)| {
+            let members: Vec<usize> = curves
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| group_index_of(c, groups) == gi && is_exportable(c))
+                .map(|(i, _)| i)
+                .collect();
+            (!members.is_empty()).then_some((gi, members))
+        })
+        .collect();
 
+    if timelapse {
+        let folder_count = folders.len();
+        let tl_folder = fresh_id(&mut next_id);
+        items.push(Item::Folder {
+            id: tl_folder.clone(),
+            title: "Time-lapse".to_string(),
+        });
+        let period_ms = (duration_secs.max(0.1) * 1000.0).round() as u64;
+        items.push(Item::Slider {
+            id: fresh_id(&mut next_id),
+            folder_id: tl_folder.clone(),
+            latex: "S=0".to_string(),
+            min: "0".to_string(),
+            max: folder_count.to_string(),
+            period_ms,
+        });
+        items.push(Item::Expr {
+            id: fresh_id(&mut next_id),
+            folder_id: tl_folder,
+            color: "#000000".to_string(),
+            latex: "q\\left(f,u\\right)=u\\min\\left(\\max\\left(S-f,0\\right),1\\right)"
+                .to_string(),
+            parametric_max: None,
+            hidden: false,
+            fill_opacity: None,
+        });
+    }
+
+    for (f, (gi, members)) in folders.iter().enumerate() {
+        let g = &groups[*gi];
         let folder_id = fresh_id(&mut next_id);
         items.push(Item::Folder {
             id: folder_id.clone(),
             title: g.name.clone(),
         });
+
+        let folder_units: usize = members.iter().map(|&ci| curves[ci].draw_units()).sum();
+        let mut offset = 0usize;
 
         let mut bez_idx = 0usize;
         let idx_for: Vec<Option<usize>> = members
@@ -106,25 +170,41 @@ fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[Stri
             let c = &curves[ci];
             let color = hex(c.color);
             match c.kind {
-                CurveKind::Bezier => items.push(Item::Expr {
-                    id: fresh_id(&mut next_id),
-                    folder_id: folder_id.clone(),
-                    color,
-                    latex: bezier_plot_latex(&g.tex_param, idx_for[k].unwrap()),
-                    parametric_max: Some(PLOT_DOMAIN_MAX),
-                    hidden: false,
-                    fill_opacity: fill_opacity_for(c),
-                }),
-                CurveKind::Ellipse => items.push(Item::Expr {
-                    id: fresh_id(&mut next_id),
-                    folder_id: folder_id.clone(),
-                    color,
-                    latex: ellipse_latex(c),
-                    parametric_max: None,
-                    hidden: false,
-                    fill_opacity: fill_opacity_for(c),
-                }),
+                CurveKind::Bezier => {
+                    let idx = idx_for[k].unwrap();
+                    let latex = if timelapse {
+                        let gate = folder_bezier_gate(f, folder_units, offset);
+                        bezier_plot_latex_restricted(&g.tex_param, idx, &gate)
+                    } else {
+                        bezier_plot_latex(&g.tex_param, idx)
+                    };
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: folder_id.clone(),
+                        color,
+                        latex,
+                        parametric_max: Some(PLOT_DOMAIN_MAX),
+                        hidden: false,
+                        fill_opacity: fill_opacity_for(c),
+                    });
+                }
+                CurveKind::Ellipse => {
+                    let mut latex = ellipse_latex(c);
+                    if timelapse {
+                        latex.push_str(&folder_ellipse_gate(f, folder_units, offset));
+                    }
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: folder_id.clone(),
+                        color,
+                        latex,
+                        parametric_max: None,
+                        hidden: false,
+                        fill_opacity: fill_opacity_for(c),
+                    });
+                }
             }
+            offset += c.draw_units();
         }
 
         for (k, &ci) in members.iter().enumerate() {
@@ -166,6 +246,25 @@ fn is_exportable(c: &CurveSet) -> bool {
         CurveKind::Bezier => c.n() > 0,
         CurveKind::Ellipse => c.ellipse_rx.abs() >= 1e-6 && c.ellipse_ry.abs() >= 1e-6,
     }
+}
+
+fn folder_reveal_expr(folder: usize, folder_units: usize) -> String {
+    format!("q\\left({folder},{folder_units}\\right)")
+}
+
+fn folder_bezier_gate(folder: usize, folder_units: usize, offset: usize) -> String {
+    let reveal = folder_reveal_expr(folder, folder_units);
+    let amount = if offset == 0 {
+        reveal
+    } else {
+        format!("{reveal}-{offset}")
+    };
+    format!("\\left\\{{t\\le {amount}\\right\\}}")
+}
+
+fn folder_ellipse_gate(folder: usize, folder_units: usize, offset: usize) -> String {
+    let reveal = folder_reveal_expr(folder, folder_units);
+    format!("\\left\\{{{reveal}>{offset}\\right\\}}")
 }
 
 fn is_plottable_t_helper(latex: &str) -> bool {
@@ -241,14 +340,38 @@ fn render_js(items: &[Item]) -> String {
                     fill_attr
                 )
             }
+            Item::Slider {
+                id,
+                folder_id,
+                latex,
+                min,
+                max,
+                period_ms,
+            } => format!(
+                "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"#000000\", \"latex\": \"{}\", \"slider\": {{ \"hardMin\": true, \"hardMax\": true, \"min\": \"{}\", \"max\": \"{}\", \"loopMode\": \"PLAY_ONCE\", \"isPlaying\": true, \"animationPeriod\": {} }} }}",
+                id,
+                folder_id,
+                js_escape(latex),
+                min,
+                max,
+                period_ms
+            ),
         })
         .collect();
+
+    let has_slider = items.iter().any(|i| matches!(i, Item::Slider { .. }));
 
     let mut out = String::new();
     out.push_str("// Erika -> Desmos export. Paste into the browser console on a Desmos graph.\n");
     out.push_str("// Requires the global `Calc` (open https://www.desmos.com/calculator).\n");
     out.push_str("// REPLACES every expression on the graph. Folder nesting needs setState\n");
     out.push_str("// (setExpressions ignores folderId), so we swap the live state's list.\n");
+    if has_slider {
+        out.push_str(
+            "// Time-lapse: the `S` slider auto-plays once and draws the art folder by\n",
+        );
+        out.push_str("//   folder (floor(S) = current folder). Press play on `S` to replay.\n");
+    }
     out.push_str("(function () {\n");
     out.push_str("  if (typeof Calc === \"undefined\") {\n");
     out.push_str("    console.error(\"Desmos `Calc` not found - open a Desmos calculator first.\");\n");
@@ -387,5 +510,64 @@ mod tests {
         let out = build_js_output(&curves, &groups, &[]);
         assert!(out.contains("\"title\": \"Used\""));
         assert!(!out.contains("\"title\": \"Empty\""));
+    }
+
+    #[test]
+    fn timelapse_adds_global_step_and_folder_step_helper() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier(
+            "a",
+            1,
+            &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0), (2.0, 0.0, 3.0, 1.0, 4.0, 0.0)],
+        )];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        assert!(out.contains("\"title\": \"Time-lapse\""));
+        assert!(out.contains("\"latex\": \"S=0\""));
+        assert!(out.contains("\"slider\""));
+        assert!(out.contains("\"animationPeriod\": 5000"));
+        assert!(out.contains("\"max\": \"1\""));
+        assert!(out.contains("q\\\\left(f,u\\\\right)="));
+        assert!(out.contains("t\\\\le q\\\\left(0,2\\\\right)\\\\right\\\\}"));
+        assert!(out.contains("\"parametricDomain\": { \"min\": \"0\", \"max\": \"99\" }"));
+    }
+
+    #[test]
+    fn timelapse_offsets_curves_within_a_folder() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let a = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let b = bezier(
+            "b",
+            1,
+            &[(2.0, 0.0, 3.0, 1.0, 4.0, 0.0), (4.0, 0.0, 5.0, 1.0, 6.0, 0.0)],
+        );
+        let curves = vec![a, b];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 3.0);
+        assert!(out.contains("\"max\": \"1\""));
+        assert!(out.contains("t\\\\le q\\\\left(0,3\\\\right)-1\\\\right\\\\}"));
+    }
+
+    #[test]
+    fn timelapse_draws_folders_on_successive_steps() {
+        let groups = vec![Group::new(1, "A", "A"), Group::new(2, "B", "B")];
+        let a = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let b = bezier("b", 2, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let curves = vec![a, b];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 4.0);
+        assert!(out.contains("\"max\": \"2\""));
+        assert!(out.contains("t\\\\le q\\\\left(0,1\\\\right)"));
+        assert!(out.contains("t\\\\le q\\\\left(1,1\\\\right)"));
+    }
+
+    #[test]
+    fn non_timelapse_export_has_no_slider_or_gate() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
+        let out = build_js_output_opts(&curves, &groups, &[], false, 5.0);
+        assert!(!out.contains("\"slider\""));
+        assert!(!out.contains("Time-lapse"));
+        assert!(!out.contains("q\\\\left(f,u"));
     }
 }

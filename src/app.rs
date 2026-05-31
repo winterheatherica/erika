@@ -119,6 +119,7 @@ pub struct App {
     pub(crate) svg_export_path: String,
     pub(crate) tex_export_path: String,
     pub(crate) js_export_path: String,
+    pub(crate) js_timelapse: bool,
     pub(crate) last_msg: Option<String>,
 
     pub(crate) new_curve_name: String,
@@ -186,6 +187,7 @@ impl App {
             svg_export_path: format!("{}/output.svg", SVG_EXPORT_DIR),
             tex_export_path: format!("{}/output.tex", TEX_EXPORT_DIR),
             js_export_path: format!("{}/output.js", JS_EXPORT_DIR),
+            js_timelapse: false,
             last_msg: None,
             new_curve_name: String::new(),
             new_curve_kind: crate::model::curve::CurveKind::Bezier,
