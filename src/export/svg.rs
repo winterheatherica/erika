@@ -7,11 +7,12 @@ pub struct SvgConfig<'a> {
     pub height: u32,
     pub background: Option<[u8; 3]>,
     pub padding_fraction: f32,
+    pub frame: Option<(f32, f32, f32, f32)>,
     pub path: &'a Path,
 }
 
 pub fn export_svg(curves: &[CurveSet], cfg: &SvgConfig) -> Result<(), String> {
-    let bounds = compute_bounds(curves, 32);
+    let bounds = cfg.frame.or_else(|| compute_bounds(curves, 32));
     let Some((mut min_x, mut min_y, mut max_x, mut max_y)) = bounds else {
         return Err("No visible curves with content to export".into());
     };

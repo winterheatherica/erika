@@ -42,6 +42,14 @@ impl App {
             self.view_menu(ui);
             self.export_menu(ui);
 
+            if ui
+                .button("Animate")
+                .on_hover_text("Morph between two exported SVGs")
+                .clicked()
+            {
+                self.show_animate = true;
+            }
+
             let msg = self.last_msg.clone();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(msg) = &msg {
@@ -185,18 +193,61 @@ impl App {
 
             ui.separator();
             export_target(ui, "SVG", SVG_EXPORT_DIR, "svg");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.export_frame_lock, "Lock frame").on_hover_text(
+                    "Use a fixed world frame across exports so unchanged lines stay \
+                     byte-identical (needed for clean Animate diffs). Auto-fit when off.",
+                );
+                if ui
+                    .button("Set to current art")
+                    .on_hover_text("Capture the current drawing bounds as the locked frame")
+                    .clicked()
+                {
+                    self.capture_export_frame();
+                }
+            });
+            if self.export_frame_lock {
+                match self.export_frame {
+                    Some(f) => {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "frame x[{:.1}, {:.1}]  y[{:.1}, {:.1}]",
+                                f[0], f[2], f[1], f[3]
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("frame captured on first export")
+                                .small()
+                                .weak(),
+                        );
+                    }
+                }
+            }
             if ui.button("Export SVG").clicked() {
+                if self.export_frame_lock && self.export_frame.is_none() {
+                    self.capture_export_frame();
+                }
                 let path = build_named_path(&self.export_name, SVG_EXPORT_DIR, "svg");
                 let bg = if self.export_transparent {
                     None
                 } else {
                     self.background
                 };
+                let frame = if self.export_frame_lock {
+                    self.export_frame.map(|f| (f[0], f[1], f[2], f[3]))
+                } else {
+                    None
+                };
                 let cfg = SvgConfig {
                     width: self.export_w,
                     height: self.export_h,
                     background: bg,
                     padding_fraction: 0.05,
+                    frame,
                     path: &path,
                 };
                 self.last_msg = Some(match export_svg(&self.curves, &cfg) {

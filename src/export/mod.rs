@@ -1,3 +1,4 @@
+pub mod anim;
 pub mod js;
 pub mod path;
 pub mod png;

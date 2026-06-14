@@ -1,3 +1,4 @@
+pub mod animate;
 pub mod canvas;
 pub mod color;
 pub mod gallery;

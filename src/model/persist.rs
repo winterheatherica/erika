@@ -46,6 +46,10 @@ pub struct ExportSettings {
     pub samples: usize,
     #[serde(default)]
     pub timelapse: bool,
+    #[serde(default)]
+    pub frame: Option<[f32; 4]>,
+    #[serde(default)]
+    pub frame_lock: bool,
 }
 
 impl Default for ExportSettings {
@@ -57,6 +61,8 @@ impl Default for ExportSettings {
             transparent: false,
             samples: default_export_samples(),
             timelapse: false,
+            frame: None,
+            frame_lock: false,
         }
     }
 }

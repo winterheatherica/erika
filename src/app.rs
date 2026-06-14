@@ -129,6 +129,12 @@ pub struct App {
     pub(crate) gallery_search: String,
     pub(crate) thumb_cache: std::collections::HashMap<PathBuf, Option<egui::TextureHandle>>,
 
+    pub(crate) show_animate: bool,
+    pub(crate) anim_from: Option<PathBuf>,
+    pub(crate) anim_to: Option<PathBuf>,
+    pub(crate) anim_default_dur: f32,
+    pub(crate) anim_diff: Option<crate::export::anim::AnimDiff>,
+
     pub(crate) color_pick_target: Option<ColorPickTarget>,
     pub(crate) last_picked_color: Option<[u8; 4]>,
 
@@ -137,6 +143,8 @@ pub struct App {
     pub(crate) export_h: u32,
     pub(crate) export_transparent: bool,
     pub(crate) export_samples: usize,
+    pub(crate) export_frame: Option<[f32; 4]>,
+    pub(crate) export_frame_lock: bool,
     pub(crate) js_timelapse: bool,
     pub(crate) last_msg: Option<String>,
 
@@ -201,6 +209,11 @@ impl App {
             show_gallery: false,
             gallery_search: String::new(),
             thumb_cache: std::collections::HashMap::new(),
+            show_animate: false,
+            anim_from: None,
+            anim_to: None,
+            anim_default_dur: 2.0,
+            anim_diff: None,
             color_pick_target: None,
             last_picked_color: None,
             export_name: "output".to_string(),
@@ -208,6 +221,8 @@ impl App {
             export_h: 1024,
             export_transparent: false,
             export_samples: 64,
+            export_frame: None,
+            export_frame_lock: false,
             js_timelapse: false,
             last_msg: None,
             new_curve_name: String::new(),
@@ -527,6 +542,30 @@ impl App {
         }
     }
 
+    pub(crate) fn capture_export_frame(&mut self) {
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut any = false;
+        for c in &self.curves {
+            if !c.visible {
+                continue;
+            }
+            for p in c.sampled_path(32) {
+                min_x = min_x.min(p.x);
+                min_y = min_y.min(p.y);
+                max_x = max_x.max(p.x);
+                max_y = max_y.max(p.y);
+                any = true;
+            }
+        }
+        if any {
+            self.export_frame = Some([min_x, min_y, max_x, max_y]);
+            self.export_frame_lock = true;
+        }
+    }
+
     fn make_project(&self) -> Project {
         Project {
             version: 1,
@@ -558,6 +597,8 @@ impl App {
                 transparent: self.export_transparent,
                 samples: self.export_samples,
                 timelapse: self.js_timelapse,
+                frame: self.export_frame,
+                frame_lock: self.export_frame_lock,
             },
         }
     }
@@ -611,6 +652,8 @@ impl App {
         self.export_h = p.export.height;
         self.export_transparent = p.export.transparent;
         self.export_samples = p.export.samples;
+        self.export_frame = p.export.frame;
+        self.export_frame_lock = p.export.frame_lock;
         self.js_timelapse = p.export.timelapse;
         self.undo_stack.clear();
         self.redo_stack.clear();
@@ -915,6 +958,10 @@ impl eframe::App for App {
 
         if self.show_gallery {
             self.gallery_window(ctx);
+        }
+
+        if self.show_animate {
+            self.animate_window(ctx);
         }
 
         let undo = ctx.input_mut(|i| {
