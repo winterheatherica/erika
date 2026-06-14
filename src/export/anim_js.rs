@@ -233,7 +233,7 @@ pub fn build_animated_js(diff: &JsDiff) -> String {
     let mut k = 1u32;
     for row in &diff.rows {
         if matches!(row.kind, JsDiffKind::Morph) && row.enabled {
-            let svar = format!("m_{{{k}}}");
+            let svar = format!("m_{{orph{k}}}");
             slider_of.insert(row.curve_key.clone(), svar.clone());
             sliders.push((svar, row.dur));
             k += 1;
@@ -300,7 +300,7 @@ fn render_js_values(items: &[Value]) -> String {
     let mut out = String::new();
     out.push_str("// Erika -> Desmos morph export. Paste into the browser console on a Desmos graph.\n");
     out.push_str("// Requires the global `Calc` (open https://www.desmos.com/calculator).\n");
-    out.push_str("// The m_k sliders auto-play (ping-pong) and morph each changed line.\n");
+    out.push_str("// The m_orph# sliders auto-play (ping-pong) and morph each changed line.\n");
     out.push_str("(function () {\n");
     out.push_str("  if (typeof Calc === \"undefined\") {\n");
     out.push_str("    console.error(\"Desmos `Calc` not found - open a Desmos calculator first.\");\n");
@@ -383,10 +383,10 @@ mod tests {
         let diff = compute_js_diff(a, b, 3.5);
         let js = build_animated_js(&diff);
         assert!(js.contains("\"title\": \"Morph\"") || js.contains("\"title\":\"Morph\""));
-        assert!(js.contains("m_{1}=0"));
+        assert!(js.contains("m_{orph1}=0"));
         assert!(js.contains("LOOP_FORWARD_REVERSE"));
         assert!(js.contains("\"animationPeriod\":3500"));
-        assert!(js.contains("1-m_{1}"));
+        assert!(js.contains("1-m_{orph1}"));
         assert!(js.contains("[(9,9)]"));
         assert!(js.contains("[(5,5)]"));
     }

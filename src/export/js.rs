@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(diff.changing_count(), 1, "curve b changed");
         let out = anim_js::build_animated_js(&diff);
         assert!(out.contains("LOOP_FORWARD_REVERSE"));
-        assert!(out.contains("1-m_{1}"));
+        assert!(out.contains("1-m_{orph1}"));
         assert!(out.contains("\"animationPeriod\":2500"));
         assert!(out.contains("A_{1}=[(0,0)]"), "unchanged curve stays static");
     }
