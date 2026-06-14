@@ -683,6 +683,32 @@ mod tests {
     }
 
     #[test]
+    fn anim_js_roundtrip_on_real_export() {
+        use crate::export::anim_js;
+        let groups = vec![Group::new(1, "Face", "A")];
+        let a = vec![
+            bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]),
+            bezier("b", 1, &[(5.0, 5.0, 6.0, 6.0, 7.0, 5.0)]),
+        ];
+        let b = vec![
+            bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]),
+            bezier("b", 1, &[(9.0, 9.0, 10.0, 10.0, 11.0, 9.0)]),
+        ];
+        let ta = build_js_output(&a, &groups, &[]);
+        let tb = build_js_output(&b, &groups, &[]);
+        let ia = anim_js::parse_js(&ta).expect("parse A");
+        let ib = anim_js::parse_js(&tb).expect("parse B");
+        let diff = anim_js::compute_js_diff(ia, ib, 2.5);
+        assert_eq!(diff.same_count, 1, "curve a unchanged");
+        assert_eq!(diff.changing_count(), 1, "curve b changed");
+        let out = anim_js::build_animated_js(&diff);
+        assert!(out.contains("LOOP_FORWARD_REVERSE"));
+        assert!(out.contains("1-m_{1}"));
+        assert!(out.contains("\"animationPeriod\":2500"));
+        assert!(out.contains("A_{1}=[(0,0)]"), "unchanged curve stays static");
+    }
+
+    #[test]
     fn non_timelapse_export_has_no_slider_or_gate() {
         let groups = vec![Group::new(1, "Face", "A")];
         let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];

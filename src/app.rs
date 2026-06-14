@@ -61,6 +61,21 @@ pub(crate) enum ColorPickTarget {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AnimFormat {
+    Svg,
+    DesmosJs,
+}
+
+impl AnimFormat {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            AnimFormat::Svg => "SVG",
+            AnimFormat::DesmosJs => "Desmos JS",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RenderMode {
     Real,
     StrokeOnly,
@@ -130,10 +145,14 @@ pub struct App {
     pub(crate) thumb_cache: std::collections::HashMap<PathBuf, Option<egui::TextureHandle>>,
 
     pub(crate) show_animate: bool,
+    pub(crate) anim_format: AnimFormat,
     pub(crate) anim_from: Option<PathBuf>,
     pub(crate) anim_to: Option<PathBuf>,
     pub(crate) anim_default_dur: f32,
     pub(crate) anim_diff: Option<crate::export::anim::AnimDiff>,
+    pub(crate) anim_js_from: Option<PathBuf>,
+    pub(crate) anim_js_to: Option<PathBuf>,
+    pub(crate) anim_js_diff: Option<crate::export::anim_js::JsDiff>,
 
     pub(crate) color_pick_target: Option<ColorPickTarget>,
     pub(crate) last_picked_color: Option<[u8; 4]>,
@@ -210,10 +229,14 @@ impl App {
             gallery_search: String::new(),
             thumb_cache: std::collections::HashMap::new(),
             show_animate: false,
+            anim_format: AnimFormat::Svg,
             anim_from: None,
             anim_to: None,
             anim_default_dur: 2.0,
             anim_diff: None,
+            anim_js_from: None,
+            anim_js_to: None,
+            anim_js_diff: None,
             color_pick_target: None,
             last_picked_color: None,
             export_name: "output".to_string(),
