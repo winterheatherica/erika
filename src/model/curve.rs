@@ -376,6 +376,29 @@ impl CurveSet {
         }
     }
 
+    pub fn rotate(&mut self, cx: f32, cy: f32, angle: f32) {
+        let (sin, cos) = angle.sin_cos();
+        match self.kind {
+            CurveKind::Bezier => {
+                for arr in [&mut self.s1, &mut self.s2, &mut self.s3] {
+                    for p in arr.iter_mut() {
+                        let dx = p.x - cx;
+                        let dy = p.y - cy;
+                        p.x = cx + dx * cos - dy * sin;
+                        p.y = cy + dx * sin + dy * cos;
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                let dx = self.ellipse_cx - cx;
+                let dy = self.ellipse_cy - cy;
+                self.ellipse_cx = cx + dx * cos - dy * sin;
+                self.ellipse_cy = cy + dx * sin + dy * cos;
+                self.ellipse_rot_deg += angle.to_degrees();
+            }
+        }
+    }
+
     pub fn sampled_path(&self, samples_per_segment: usize) -> Vec<P> {
         match self.kind {
             CurveKind::Bezier => self.sampled_bezier(samples_per_segment),

@@ -126,6 +126,10 @@ pub struct App {
     pub(crate) dragging_image: bool,
     pub(crate) drag_image_offset: Vec2,
     pub(crate) dragging_selection: bool,
+    pub(crate) dragging_rotation: bool,
+    pub(crate) rotate_center: P,
+    pub(crate) rotate_radius: f32,
+    pub(crate) rotate_prev_angle: f32,
     pub(crate) panning: bool,
     pub(crate) link_continuity: bool,
 
@@ -216,6 +220,10 @@ impl App {
             dragging_image: false,
             drag_image_offset: Vec2::ZERO,
             dragging_selection: false,
+            dragging_rotation: false,
+            rotate_center: P::new(0.0, 0.0),
+            rotate_radius: 0.0,
+            rotate_prev_angle: 0.0,
             panning: false,
             link_continuity: true,
             samples_per_segment: 32,
@@ -392,6 +400,7 @@ impl App {
         self.dragging_handle = None;
         self.dragging_image = false;
         self.dragging_selection = false;
+        self.dragging_rotation = false;
         self.panning = false;
     }
 
@@ -863,6 +872,15 @@ impl App {
         }
     }
 
+    pub(crate) fn rotate_selection(&mut self, center: P, angle: f32) {
+        let idx: Vec<usize> = self.multi_select.iter().copied().collect();
+        for i in idx {
+            if let Some(c) = self.curves.get_mut(i) {
+                c.rotate(center.x, center.y, angle);
+            }
+        }
+    }
+
     pub(crate) fn selection_bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let mut min_x = f32::INFINITY;
         let mut min_y = f32::INFINITY;
@@ -1282,5 +1300,19 @@ mod tests {
         assert_eq!(app.curves[0].s1[0].x, 2.0, "x=0 mirrors to 2 around center x=1");
         assert_eq!(app.curves[0].s3[0].x, 0.0, "x=2 mirrors to 0");
         assert_eq!(app.curves[0].s1[0].y, 0.0, "y unchanged on horizontal flip");
+    }
+
+    #[test]
+    fn rotate_selection_rotates_points_around_center() {
+        let mut app = super::App::new();
+        app.curves[0].append_segment();
+        app.multi_select = [0].into_iter().collect();
+        let center = app.selection_center().unwrap();
+
+        app.rotate_selection(center, std::f32::consts::FRAC_PI_2);
+
+        let p = app.curves[0].s1[0];
+        assert!((p.x - 1.25).abs() < 1e-4, "x={}", p.x);
+        assert!((p.y + 0.75).abs() < 1e-4, "y={}", p.y);
     }
 }

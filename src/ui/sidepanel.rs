@@ -340,8 +340,9 @@ impl App {
         });
         ui.label(
             egui::RichText::new(
-                "Select curves (boxes / Ctrl+click / Select folder), then drag the round move \
-                 handle to move them, or Flip H/V to mirror them around the center.",
+                "Select curves (boxes / Ctrl+click / Select folder), then on canvas drag the \
+                 center handle to move, the top knob to rotate, or use Flip H/V — all around the \
+                 selection center.",
             )
             .small()
             .weak(),

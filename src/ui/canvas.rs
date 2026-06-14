@@ -69,9 +69,18 @@ impl App {
             if let Some(pos) = response.interact_pointer_pos() {
                 let mut started = false;
                 if !self.multi_select.is_empty() {
-                    if let Some(center) = self.selection_center() {
+                    if let Some((min_x, min_y, max_x, max_y)) = self.selection_bounds() {
+                        let center = P::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+                        let knob = P::new(center.x, max_y + 26.0 / self.scale);
                         if (pos - self.w2s(rect, center)).length() <= 14.0 {
                             self.dragging_selection = true;
+                            started = true;
+                        } else if (pos - self.w2s(rect, knob)).length() <= 12.0 {
+                            self.dragging_rotation = true;
+                            self.rotate_center = center;
+                            self.rotate_radius = knob.y - center.y;
+                            let w = self.s2w(rect, pos);
+                            self.rotate_prev_angle = (w.y - center.y).atan2(w.x - center.x);
                             started = true;
                         }
                     }
@@ -100,6 +109,15 @@ impl App {
             if self.dragging_selection {
                 let d = response.drag_delta();
                 self.translate_selection(d.x / self.scale, -d.y / self.scale);
+            } else if self.dragging_rotation {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let w = self.s2w(rect, pos);
+                    let c = self.rotate_center;
+                    let angle = (w.y - c.y).atan2(w.x - c.x);
+                    let delta = angle - self.rotate_prev_angle;
+                    self.rotate_selection(c, delta);
+                    self.rotate_prev_angle = angle;
+                }
             } else if self.dragging_image {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let new_screen = pos - self.drag_image_offset;
@@ -124,6 +142,7 @@ impl App {
             self.dragging_handle = None;
             self.dragging_image = false;
             self.dragging_selection = false;
+            self.dragging_rotation = false;
             self.panning = false;
         }
 
@@ -433,13 +452,33 @@ impl App {
             return;
         };
         let col = Color32::from_rgb(80, 140, 255);
+        let fill = Color32::from_rgba_unmultiplied(80, 140, 255, 40);
+
         let tl = self.w2s(rect, P::new(min_x, max_y));
         let br = self.w2s(rect, P::new(max_x, min_y));
         let bbox = Rect::from_min_max(tl, br).expand(4.0);
         painter.rect_stroke(bbox, 2.0, Stroke::new(1.0, col));
 
-        let center = self.w2s(rect, P::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5));
-        let fill = Color32::from_rgba_unmultiplied(80, 140, 255, 40);
+        let pivot_world = if self.dragging_rotation {
+            self.rotate_center
+        } else {
+            P::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5)
+        };
+        let center = self.w2s(rect, pivot_world);
+
+        let knob_world = if self.dragging_rotation {
+            P::new(
+                self.rotate_center.x + self.rotate_radius * self.rotate_prev_angle.cos(),
+                self.rotate_center.y + self.rotate_radius * self.rotate_prev_angle.sin(),
+            )
+        } else {
+            P::new(pivot_world.x, max_y + 26.0 / self.scale)
+        };
+        let knob = self.w2s(rect, knob_world);
+        painter.line_segment([center, knob], Stroke::new(1.0, col));
+        let knob_ring = Stroke::new(if self.dragging_rotation { 2.5 } else { 1.5 }, col);
+        painter.circle(knob, 6.5, fill, knob_ring);
+
         let ring = Stroke::new(if self.dragging_selection { 2.5 } else { 1.5 }, col);
         painter.circle(center, 11.0, fill, ring);
         let a = 6.0;
