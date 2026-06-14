@@ -41,6 +41,15 @@ fn bijective_base26(mut n: usize) -> String {
     chars.iter().rev().collect()
 }
 
+pub(crate) fn snap_angle(total: f32, snap: bool) -> f32 {
+    if snap {
+        let step = std::f32::consts::FRAC_PI_4;
+        (total / step).round() * step
+    } else {
+        total
+    }
+}
+
 use crate::model::curve::{Arr, CurveSet, Group, P, PALETTE};
 use crate::model::image_ref::ReferenceImage;
 use crate::model::persist::{CameraState, ExportSettings, Project};
@@ -129,7 +138,9 @@ pub struct App {
     pub(crate) dragging_rotation: bool,
     pub(crate) rotate_center: P,
     pub(crate) rotate_radius: f32,
-    pub(crate) rotate_prev_angle: f32,
+    pub(crate) rotate_prev_raw: f32,
+    pub(crate) rotate_total: f32,
+    pub(crate) rotate_applied: f32,
     pub(crate) panning: bool,
     pub(crate) link_continuity: bool,
 
@@ -223,7 +234,9 @@ impl App {
             dragging_rotation: false,
             rotate_center: P::new(0.0, 0.0),
             rotate_radius: 0.0,
-            rotate_prev_angle: 0.0,
+            rotate_prev_raw: 0.0,
+            rotate_total: 0.0,
+            rotate_applied: 0.0,
             panning: false,
             link_continuity: true,
             samples_per_segment: 32,
@@ -1314,5 +1327,15 @@ mod tests {
         let p = app.curves[0].s1[0];
         assert!((p.x - 1.25).abs() < 1e-4, "x={}", p.x);
         assert!((p.y + 0.75).abs() < 1e-4, "y={}", p.y);
+    }
+
+    #[test]
+    fn snap_angle_clicks_to_45_degrees_when_enabled() {
+        use std::f32::consts::FRAC_PI_4;
+        let almost = FRAC_PI_4 * 0.9;
+        assert!((super::snap_angle(almost, true) - FRAC_PI_4).abs() < 1e-5);
+        assert!((super::snap_angle(almost, false) - almost).abs() < 1e-5);
+        let wide = FRAC_PI_4 * 2.4;
+        assert!((super::snap_angle(wide, true) - FRAC_PI_4 * 2.0).abs() < 1e-5);
     }
 }

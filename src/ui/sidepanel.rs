@@ -341,8 +341,8 @@ impl App {
         ui.label(
             egui::RichText::new(
                 "Select curves (boxes / Ctrl+click / Select folder), then on canvas drag the \
-                 center handle to move, the top knob to rotate, or use Flip H/V — all around the \
-                 selection center.",
+                 center handle to move or the top knob to rotate (hold Shift to snap rotation to \
+                 45°), or use Flip H/V. Everything pivots on the selection center.",
             )
             .small()
             .weak(),

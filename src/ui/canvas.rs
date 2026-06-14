@@ -80,7 +80,9 @@ impl App {
                             self.rotate_center = center;
                             self.rotate_radius = knob.y - center.y;
                             let w = self.s2w(rect, pos);
-                            self.rotate_prev_angle = (w.y - center.y).atan2(w.x - center.x);
+                            self.rotate_prev_raw = (w.y - center.y).atan2(w.x - center.x);
+                            self.rotate_total = 0.0;
+                            self.rotate_applied = 0.0;
                             started = true;
                         }
                     }
@@ -113,10 +115,20 @@ impl App {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let w = self.s2w(rect, pos);
                     let c = self.rotate_center;
-                    let angle = (w.y - c.y).atan2(w.x - c.x);
-                    let delta = angle - self.rotate_prev_angle;
+                    let cur = (w.y - c.y).atan2(w.x - c.x);
+                    let mut d = cur - self.rotate_prev_raw;
+                    if d > std::f32::consts::PI {
+                        d -= std::f32::consts::TAU;
+                    } else if d < -std::f32::consts::PI {
+                        d += std::f32::consts::TAU;
+                    }
+                    self.rotate_prev_raw = cur;
+                    self.rotate_total += d;
+                    let snap = ui.input(|i| i.modifiers.shift);
+                    let target = crate::app::snap_angle(self.rotate_total, snap);
+                    let delta = target - self.rotate_applied;
                     self.rotate_selection(c, delta);
-                    self.rotate_prev_angle = angle;
+                    self.rotate_applied = target;
                 }
             } else if self.dragging_image {
                 if let Some(pos) = response.interact_pointer_pos() {
@@ -467,9 +479,10 @@ impl App {
         let center = self.w2s(rect, pivot_world);
 
         let knob_world = if self.dragging_rotation {
+            let ang = std::f32::consts::FRAC_PI_2 + self.rotate_applied;
             P::new(
-                self.rotate_center.x + self.rotate_radius * self.rotate_prev_angle.cos(),
-                self.rotate_center.y + self.rotate_radius * self.rotate_prev_angle.sin(),
+                self.rotate_center.x + self.rotate_radius * ang.cos(),
+                self.rotate_center.y + self.rotate_radius * ang.sin(),
             )
         } else {
             P::new(pivot_world.x, max_y + 26.0 / self.scale)
