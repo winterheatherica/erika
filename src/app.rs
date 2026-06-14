@@ -112,6 +112,7 @@ impl RenderMode {
 pub struct App {
     pub(crate) curves: Vec<CurveSet>,
     pub(crate) selected: usize,
+    pub(crate) multi_select: std::collections::BTreeSet<usize>,
     pub(crate) groups: Vec<Group>,
     pub(crate) next_group_id: u64,
     pub(crate) new_curve_group_id: Option<u64>,
@@ -202,6 +203,7 @@ impl App {
         Self {
             curves: initial.clone(),
             selected: 0,
+            multi_select: std::collections::BTreeSet::new(),
             groups: vec![default_group.clone()],
             next_group_id: 2,
             new_curve_group_id: Some(default_group.id),
@@ -391,6 +393,7 @@ impl App {
     }
 
     fn clamp_selection(&mut self) {
+        self.multi_select.clear();
         if self.curves.is_empty() {
             self.selected = 0;
         } else if self.selected >= self.curves.len() {
@@ -652,6 +655,7 @@ impl App {
             c.clamp_active_segment();
         }
         self.selected = 0;
+        self.multi_select.clear();
         self.new_curve_group_id = Some(default_id);
         self.active_group_id = Some(default_id);
         let mut images = p.reference_images;
@@ -729,6 +733,7 @@ impl App {
     pub(crate) fn set_active_group(&mut self, id: u64) {
         self.active_group_id = Some(id);
         self.new_curve_group_id = Some(id);
+        self.multi_select.clear();
         let sel_in_group = self
             .curves
             .get(self.selected)
@@ -800,6 +805,73 @@ impl App {
         copy.created_at.clear();
         self.curves.insert(i + 1, copy);
         self.selected = i + 1;
+    }
+
+    pub(crate) fn duplicate_curves(&mut self, indices: &[usize]) {
+        let mut idx: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| i < self.curves.len())
+            .collect();
+        idx.sort_unstable();
+        idx.dedup();
+        if idx.is_empty() {
+            return;
+        }
+        let insert_at = idx[idx.len() - 1] + 1;
+        let copies: Vec<CurveSet> = idx
+            .iter()
+            .map(|&i| {
+                let mut copy = self.curves[i].clone();
+                copy.name = format!("{}-copy", copy.name);
+                copy.created_at.clear();
+                copy
+            })
+            .collect();
+        let n = copies.len();
+        for (offset, copy) in copies.into_iter().enumerate() {
+            self.curves.insert(insert_at + offset, copy);
+        }
+        self.selected = insert_at;
+        self.multi_select = (insert_at..insert_at + n).collect();
+    }
+
+    pub(crate) fn handle_curve_click(
+        &mut self,
+        i: usize,
+        ctrl: bool,
+        shift: bool,
+        active_group: Option<u64>,
+    ) {
+        if ctrl {
+            if !self.multi_select.remove(&i) {
+                self.multi_select.insert(i);
+            }
+        } else if shift {
+            let anchor = self.selected;
+            let active: Vec<usize> = self
+                .curves
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.group_id == active_group)
+                .map(|(idx, _)| idx)
+                .collect();
+            match (
+                active.iter().position(|&x| x == anchor),
+                active.iter().position(|&x| x == i),
+            ) {
+                (Some(pa), Some(pi)) => {
+                    let (lo, hi) = if pa <= pi { (pa, pi) } else { (pi, pa) };
+                    for &gi in &active[lo..=hi] {
+                        self.multi_select.insert(gi);
+                    }
+                }
+                _ => {
+                    self.multi_select.insert(i);
+                }
+            }
+        }
+        self.selected = i;
     }
 
     pub(crate) fn save_current(&mut self) {
@@ -1090,5 +1162,37 @@ mod tests {
         assert_eq!(app.curves[1].name, "Eye-copy");
         assert_eq!(app.curves[1].group_id, group, "copy stays in the same folder");
         assert_eq!(app.selected, 1, "the copy becomes selected");
+    }
+
+    #[test]
+    fn duplicate_curves_inserts_block_after_last_selected() {
+        use crate::model::curve::{CurveSet, PALETTE};
+        let mut app = super::App::new();
+        app.curves[0].name = "a".to_string();
+        let group = app.curves[0].group_id;
+        for name in ["b", "c"] {
+            let mut extra = CurveSet::empty(name, PALETTE[1]);
+            extra.group_id = group;
+            app.curves.push(extra);
+        }
+
+        app.duplicate_curves(&[2, 0]);
+
+        assert_eq!(app.curves.len(), 5, "two copies added");
+        assert_eq!(app.curves[3].name, "a-copy", "sorted by index, a first");
+        assert_eq!(app.curves[4].name, "c-copy");
+        assert_eq!(app.curves[3].group_id, group, "copies keep the folder");
+        assert_eq!(app.selected, 3, "first copy becomes selected");
+        let expected: std::collections::BTreeSet<usize> = [3, 4].into_iter().collect();
+        assert_eq!(app.multi_select, expected, "copies become the new selection");
+    }
+
+    #[test]
+    fn duplicate_curves_ignores_empty_and_out_of_range() {
+        let mut app = super::App::new();
+        let before = app.curves.len();
+        app.duplicate_curves(&[]);
+        app.duplicate_curves(&[99]);
+        assert_eq!(app.curves.len(), before, "no-op on empty or bad indices");
     }
 }

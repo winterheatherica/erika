@@ -244,6 +244,7 @@ impl App {
                 new_curve.group_id = target_group;
                 self.curves.push(new_curve);
                 self.selected = self.curves.len() - 1;
+                self.multi_select.clear();
                 self.active_group_id = target_group;
                 self.new_curve_name.clear();
             }
@@ -251,7 +252,10 @@ impl App {
 
         let mut to_delete: Option<usize> = None;
         let mut to_duplicate: Option<usize> = None;
-        let mut select: Option<usize> = None;
+        let mut click: Option<(usize, bool, bool)> = None;
+        let mut toggle_select: Option<usize> = None;
+        let mut bulk_copy = false;
+        let mut group_changed = false;
         let mut to_forward: Option<usize> = None;
         let mut to_backward: Option<usize> = None;
         let mut to_front: Option<usize> = None;
@@ -278,11 +282,46 @@ impl App {
                     .weak(),
             );
         }
+        ui.horizontal(|ui| {
+            let n = self.multi_select.len();
+            let copy_label = if n > 1 {
+                format!("⧉ Copy selected ({n})")
+            } else {
+                "⧉ Copy selected".to_string()
+            };
+            if ui
+                .add_enabled(n >= 1, egui::Button::new(copy_label))
+                .on_hover_text("Duplicate every selected curve at once (names get \"-copy\")")
+                .clicked()
+            {
+                bulk_copy = true;
+            }
+            if ui
+                .add_enabled(n >= 1, egui::Button::new("Clear"))
+                .on_hover_text("Clear the multi-selection")
+                .clicked()
+            {
+                self.multi_select.clear();
+            }
+            ui.label(
+                egui::RichText::new("Check boxes or Ctrl/Shift+click names, then Copy selected")
+                    .small()
+                    .weak(),
+            );
+        });
         for (i, c) in self.curves.iter_mut().enumerate() {
             if c.group_id != active_group {
                 continue;
             }
             ui.horizontal(|ui| {
+                let mut checked = self.multi_select.contains(&i);
+                if ui
+                    .checkbox(&mut checked, "")
+                    .on_hover_text("Select for bulk copy")
+                    .changed()
+                {
+                    toggle_select = Some(i);
+                }
                 ui.label(
                     egui::RichText::new(format!("{:>2}", i + 1))
                         .monospace()
@@ -290,15 +329,18 @@ impl App {
                 )
                 .on_hover_text("Global layer position");
                 let _ = ui.color_edit_button_srgb(&mut c.color);
-                ui.checkbox(&mut c.visible, "");
+                ui.checkbox(&mut c.visible, "").on_hover_text("Visible");
                 let kind_tag = match c.kind {
                     CurveKind::Bezier => "B",
                     CurveKind::Ellipse => "E",
                 };
                 let label = format!("[{}] {}", kind_tag, c.name);
-                if ui.selectable_label(self.selected == i, label).clicked() {
-                    select = Some(i);
+                let is_sel = self.selected == i || self.multi_select.contains(&i);
+                if ui.selectable_label(is_sel, label).clicked() {
+                    let mods = ui.input(|inp| inp.modifiers);
+                    click = Some((i, mods.command || mods.ctrl, mods.shift));
                 }
+                let prev_group = c.group_id;
                 let group_label = c
                     .group_id
                     .and_then(|id| {
@@ -316,6 +358,9 @@ impl App {
                             ui.selectable_value(&mut c.group_id, Some(*gid), gname);
                         }
                     });
+                if c.group_id != prev_group {
+                    group_changed = true;
+                }
                 if ui
                     .add_enabled(i + 1 < total, egui::Button::new("▲").small())
                     .on_hover_text("Bring forward (draw on top of next)")
@@ -356,23 +401,34 @@ impl App {
                 }
             });
         }
-        if let Some(i) = select {
-            self.selected = i;
+        if let Some((i, ctrl, shift)) = click {
+            self.handle_curve_click(i, ctrl, shift, active_group);
         }
+        if let Some(i) = toggle_select {
+            if !self.multi_select.remove(&i) {
+                self.multi_select.insert(i);
+            }
+        }
+        let mut structural = group_changed;
         if let Some(i) = to_forward {
             self.move_curve_forward(i);
+            structural = true;
         }
         if let Some(i) = to_backward {
             self.move_curve_backward(i);
+            structural = true;
         }
         if let Some(i) = to_front {
             self.move_curve_to_front(i);
+            structural = true;
         }
         if let Some(i) = to_back {
             self.move_curve_to_back(i);
+            structural = true;
         }
         if let Some(i) = to_duplicate {
             self.duplicate_curve(i);
+            structural = true;
         }
         if let Some(i) = to_delete {
             if self.curves.len() > 1 {
@@ -384,6 +440,13 @@ impl App {
                 self.curves[i] =
                     CurveSet::empty(format!("Curve {}", i + 1), PALETTE[i % PALETTE.len()]);
             }
+            structural = true;
+        }
+        if bulk_copy {
+            let sel: Vec<usize> = self.multi_select.iter().copied().collect();
+            self.duplicate_curves(&sel);
+        } else if structural {
+            self.multi_select.clear();
         }
 
         ui.separator();
