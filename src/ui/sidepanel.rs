@@ -303,12 +303,32 @@ impl App {
             {
                 self.multi_select.clear();
             }
-            ui.label(
-                egui::RichText::new("Check boxes or Ctrl/Shift+click names, then Copy selected")
-                    .small()
-                    .weak(),
-            );
+            if ui
+                .button("Select folder")
+                .on_hover_text("Add every curve in this folder to the selection (works across folders)")
+                .clicked()
+            {
+                let ag = self.active_group_id;
+                let idxs: Vec<usize> = self
+                    .curves
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.group_id == ag)
+                    .map(|(i, _)| i)
+                    .collect();
+                for i in idxs {
+                    self.multi_select.insert(i);
+                }
+            }
         });
+        ui.label(
+            egui::RichText::new(
+                "Select curves (boxes / Ctrl+click / Select folder), then drag the round move \
+                 handle at the center of the selection box to move them all at once.",
+            )
+            .small()
+            .weak(),
+        );
         for (i, c) in self.curves.iter_mut().enumerate() {
             if c.group_id != active_group {
                 continue;

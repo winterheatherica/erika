@@ -68,7 +68,15 @@ impl App {
         if !consumed_by_pick && response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = response.interact_pointer_pos() {
                 let mut started = false;
-                if self.image_drag_enabled {
+                if !self.multi_select.is_empty() {
+                    if let Some(center) = self.selection_center() {
+                        if (pos - self.w2s(rect, center)).length() <= 14.0 {
+                            self.dragging_selection = true;
+                            started = true;
+                        }
+                    }
+                }
+                if !started && self.image_drag_enabled {
                     if let Some(img) = self.reference_images.get(self.selected_image) {
                         if img.visible && !img.locked && self.image_hit(rect, pos) {
                             let img_screen_pos =
@@ -89,7 +97,10 @@ impl App {
             }
         }
         if response.dragged_by(egui::PointerButton::Primary) {
-            if self.dragging_image {
+            if self.dragging_selection {
+                let d = response.drag_delta();
+                self.translate_selection(d.x / self.scale, -d.y / self.scale);
+            } else if self.dragging_image {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let new_screen = pos - self.drag_image_offset;
                     let top_left_world = self.s2w(rect, new_screen);
@@ -112,6 +123,7 @@ impl App {
         if response.drag_stopped() {
             self.dragging_handle = None;
             self.dragging_image = false;
+            self.dragging_selection = false;
             self.panning = false;
         }
 
@@ -186,6 +198,10 @@ impl App {
                 let is_sel = ci == self.selected;
                 self.draw_handles(&painter, rect, ci, c, is_sel);
             }
+        }
+
+        if self.playback_progress >= 1.0 && !self.multi_select.is_empty() {
+            self.draw_selection_gizmo(&painter, rect);
         }
 
         if let Some(pos) = response.hover_pos() {
@@ -410,6 +426,26 @@ impl App {
                 );
             }
         }
+    }
+
+    fn draw_selection_gizmo(&self, painter: &egui::Painter, rect: Rect) {
+        let Some((min_x, min_y, max_x, max_y)) = self.selection_bounds() else {
+            return;
+        };
+        let col = Color32::from_rgb(80, 140, 255);
+        let tl = self.w2s(rect, P::new(min_x, max_y));
+        let br = self.w2s(rect, P::new(max_x, min_y));
+        let bbox = Rect::from_min_max(tl, br).expand(4.0);
+        painter.rect_stroke(bbox, 2.0, Stroke::new(1.0, col));
+
+        let center = self.w2s(rect, P::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5));
+        let fill = Color32::from_rgba_unmultiplied(80, 140, 255, 40);
+        let ring = Stroke::new(if self.dragging_selection { 2.5 } else { 1.5 }, col);
+        painter.circle(center, 11.0, fill, ring);
+        let a = 6.0;
+        let arm = Stroke::new(1.8, col);
+        painter.line_segment([center - Vec2::new(a, 0.0), center + Vec2::new(a, 0.0)], arm);
+        painter.line_segment([center - Vec2::new(0.0, a), center + Vec2::new(0.0, a)], arm);
     }
 
     fn image_hit(&self, rect: Rect, screen_pos: Pos2) -> bool {

@@ -327,6 +327,23 @@ impl CurveSet {
         }
     }
 
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        match self.kind {
+            CurveKind::Bezier => {
+                for arr in [&mut self.s1, &mut self.s2, &mut self.s3] {
+                    for p in arr.iter_mut() {
+                        p.x += dx;
+                        p.y += dy;
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                self.ellipse_cx += dx;
+                self.ellipse_cy += dy;
+            }
+        }
+    }
+
     pub fn sampled_path(&self, samples_per_segment: usize) -> Vec<P> {
         match self.kind {
             CurveKind::Bezier => self.sampled_bezier(samples_per_segment),

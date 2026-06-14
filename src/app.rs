@@ -125,6 +125,7 @@ pub struct App {
     pub(crate) dragging_handle: Option<HandleId>,
     pub(crate) dragging_image: bool,
     pub(crate) drag_image_offset: Vec2,
+    pub(crate) dragging_selection: bool,
     pub(crate) panning: bool,
     pub(crate) link_continuity: bool,
 
@@ -214,6 +215,7 @@ impl App {
             dragging_handle: None,
             dragging_image: false,
             drag_image_offset: Vec2::ZERO,
+            dragging_selection: false,
             panning: false,
             link_continuity: true,
             samples_per_segment: 32,
@@ -389,6 +391,7 @@ impl App {
     fn cancel_interactions(&mut self) {
         self.dragging_handle = None;
         self.dragging_image = false;
+        self.dragging_selection = false;
         self.panning = false;
     }
 
@@ -733,7 +736,6 @@ impl App {
     pub(crate) fn set_active_group(&mut self, id: u64) {
         self.active_group_id = Some(id);
         self.new_curve_group_id = Some(id);
-        self.multi_select.clear();
         let sel_in_group = self
             .curves
             .get(self.selected)
@@ -834,6 +836,43 @@ impl App {
         }
         self.selected = insert_at;
         self.multi_select = (insert_at..insert_at + n).collect();
+    }
+
+    pub(crate) fn translate_selection(&mut self, dx: f32, dy: f32) {
+        let idx: Vec<usize> = self.multi_select.iter().copied().collect();
+        for i in idx {
+            if let Some(c) = self.curves.get_mut(i) {
+                c.translate(dx, dy);
+            }
+        }
+    }
+
+    pub(crate) fn selection_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut any = false;
+        for &i in &self.multi_select {
+            let Some(c) = self.curves.get(i) else {
+                continue;
+            };
+            for p in c.sampled_path(16) {
+                min_x = min_x.min(p.x);
+                min_y = min_y.min(p.y);
+                max_x = max_x.max(p.x);
+                max_y = max_y.max(p.y);
+                any = true;
+            }
+        }
+        any.then_some((min_x, min_y, max_x, max_y))
+    }
+
+    pub(crate) fn selection_center(&self) -> Option<P> {
+        self.selection_bounds()
+            .map(|(min_x, min_y, max_x, max_y)| {
+                P::new((min_x + max_x) * 0.5, (min_y + max_y) * 0.5)
+            })
     }
 
     pub(crate) fn handle_curve_click(
@@ -1194,5 +1233,25 @@ mod tests {
         app.duplicate_curves(&[]);
         app.duplicate_curves(&[99]);
         assert_eq!(app.curves.len(), before, "no-op on empty or bad indices");
+    }
+
+    #[test]
+    fn translate_selection_moves_only_selected_curves() {
+        use crate::model::curve::{CurveSet, P, PALETTE};
+        let mut app = super::App::new();
+        app.curves[0].append_segment();
+        for name in ["b", "c"] {
+            let mut extra = CurveSet::empty(name, PALETTE[1]);
+            extra.append_segment();
+            app.curves.push(extra);
+        }
+        app.multi_select = [0, 2].into_iter().collect();
+
+        app.translate_selection(10.0, -5.0);
+
+        assert_eq!(app.curves[0].s1[0], P::new(10.0, -5.0));
+        assert_eq!(app.curves[0].s3[0], P::new(12.0, -5.0));
+        assert_eq!(app.curves[2].s1[0], P::new(10.0, -5.0));
+        assert_eq!(app.curves[1].s1[0], P::new(0.0, 0.0), "unselected stays put");
     }
 }
