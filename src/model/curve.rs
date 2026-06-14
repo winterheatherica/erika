@@ -344,6 +344,38 @@ impl CurveSet {
         }
     }
 
+    pub fn flip_h(&mut self, cx: f32) {
+        match self.kind {
+            CurveKind::Bezier => {
+                for arr in [&mut self.s1, &mut self.s2, &mut self.s3] {
+                    for p in arr.iter_mut() {
+                        p.x = 2.0 * cx - p.x;
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                self.ellipse_cx = 2.0 * cx - self.ellipse_cx;
+                self.ellipse_rot_deg = -self.ellipse_rot_deg;
+            }
+        }
+    }
+
+    pub fn flip_v(&mut self, cy: f32) {
+        match self.kind {
+            CurveKind::Bezier => {
+                for arr in [&mut self.s1, &mut self.s2, &mut self.s3] {
+                    for p in arr.iter_mut() {
+                        p.y = 2.0 * cy - p.y;
+                    }
+                }
+            }
+            CurveKind::Ellipse => {
+                self.ellipse_cy = 2.0 * cy - self.ellipse_cy;
+                self.ellipse_rot_deg = -self.ellipse_rot_deg;
+            }
+        }
+    }
+
     pub fn sampled_path(&self, samples_per_segment: usize) -> Vec<P> {
         match self.kind {
             CurveKind::Bezier => self.sampled_bezier(samples_per_segment),

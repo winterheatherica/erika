@@ -847,6 +847,22 @@ impl App {
         }
     }
 
+    pub(crate) fn flip_selection(&mut self, horizontal: bool) {
+        let Some(center) = self.selection_center() else {
+            return;
+        };
+        let idx: Vec<usize> = self.multi_select.iter().copied().collect();
+        for i in idx {
+            if let Some(c) = self.curves.get_mut(i) {
+                if horizontal {
+                    c.flip_h(center.x);
+                } else {
+                    c.flip_v(center.y);
+                }
+            }
+        }
+    }
+
     pub(crate) fn selection_bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let mut min_x = f32::INFINITY;
         let mut min_y = f32::INFINITY;
@@ -1253,5 +1269,18 @@ mod tests {
         assert_eq!(app.curves[0].s3[0], P::new(12.0, -5.0));
         assert_eq!(app.curves[2].s1[0], P::new(10.0, -5.0));
         assert_eq!(app.curves[1].s1[0], P::new(0.0, 0.0), "unselected stays put");
+    }
+
+    #[test]
+    fn flip_selection_mirrors_horizontally_around_center() {
+        let mut app = super::App::new();
+        app.curves[0].append_segment();
+        app.multi_select = [0].into_iter().collect();
+
+        app.flip_selection(true);
+
+        assert_eq!(app.curves[0].s1[0].x, 2.0, "x=0 mirrors to 2 around center x=1");
+        assert_eq!(app.curves[0].s3[0].x, 0.0, "x=2 mirrors to 0");
+        assert_eq!(app.curves[0].s1[0].y, 0.0, "y unchanged on horizontal flip");
     }
 }

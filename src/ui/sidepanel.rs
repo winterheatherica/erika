@@ -321,10 +321,27 @@ impl App {
                 }
             }
         });
+        let sel_count = self.multi_select.len();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(sel_count >= 1, egui::Button::new("Flip H"))
+                .on_hover_text("Mirror the selection left/right around its center")
+                .clicked()
+            {
+                self.flip_selection(true);
+            }
+            if ui
+                .add_enabled(sel_count >= 1, egui::Button::new("Flip V"))
+                .on_hover_text("Mirror the selection up/down around its center")
+                .clicked()
+            {
+                self.flip_selection(false);
+            }
+        });
         ui.label(
             egui::RichText::new(
                 "Select curves (boxes / Ctrl+click / Select folder), then drag the round move \
-                 handle at the center of the selection box to move them all at once.",
+                 handle to move them, or Flip H/V to mirror them around the center.",
             )
             .small()
             .weak(),
