@@ -165,25 +165,69 @@ impl App {
         let files = anim_js::list_js_files(JS_EXPORT_DIR);
         let mut do_generate = false;
 
-        ui.label(egui::RichText::new("Morph between two exported Desmos JS files").strong());
+        ui.label(egui::RichText::new("Morph through exported Desmos JS keyframes").strong());
         ui.label(
             egui::RichText::new(
-                "Each changed curve gets an auto-playing slider that interpolates its control \
-                 points (ping-pong). Paste the result into the Desmos console.",
+                "Keyframes play in order on one auto-playing timeline (ping-pong); each step \
+                 has its own duration. Changed curves interpolate their control points. Paste \
+                 the result into the Desmos console.",
             )
             .small()
             .weak(),
         );
         ui.add_space(6.0);
 
+        let want_durs = self.anim_js_files.len().saturating_sub(1);
+        while self.anim_js_durs.len() < want_durs {
+            self.anim_js_durs.push(self.anim_default_dur);
+        }
+        self.anim_js_durs.truncate(want_durs);
+
         let mut changed = false;
+        let mut remove_idx: Option<usize> = None;
+        let n = self.anim_js_files.len();
+        for i in 0..n {
+            ui.horizontal(|ui| {
+                ui.label(format!("Keyframe {}:", i + 1));
+                changed |= file_combo(
+                    ui,
+                    &format!("anim_js_kf_{i}"),
+                    &files,
+                    &mut self.anim_js_files[i],
+                );
+                if n > 2 && ui.small_button("✖").clicked() {
+                    remove_idx = Some(i);
+                }
+            });
+            if i + 1 < n {
+                ui.horizontal(|ui| {
+                    ui.add_space(80.0);
+                    ui.label("⬇ step");
+                    ui.add(
+                        egui::DragValue::new(&mut self.anim_js_durs[i])
+                            .range(0.1..=60.0)
+                            .speed(0.1)
+                            .suffix(" s"),
+                    );
+                });
+            }
+        }
+        if let Some(i) = remove_idx {
+            self.anim_js_files.remove(i);
+            let di = i.saturating_sub(1);
+            if di < self.anim_js_durs.len() {
+                self.anim_js_durs.remove(di);
+            }
+            changed = true;
+        }
         ui.horizontal(|ui| {
-            ui.label("From (A):");
-            changed |= file_combo(ui, "anim_js_from", &files, &mut self.anim_js_from);
-        });
-        ui.horizontal(|ui| {
-            ui.label("To (B):");
-            changed |= file_combo(ui, "anim_js_to", &files, &mut self.anim_js_to);
+            if ui.button("➕ Add keyframe").clicked() {
+                self.anim_js_files.push(None);
+                self.anim_js_durs.push(self.anim_default_dur);
+                changed = true;
+            }
+            let total: f32 = self.anim_js_durs.iter().sum();
+            ui.label(egui::RichText::new(format!("Total: {total:.1} s")).weak());
         });
 
         let mut apply_all = false;
@@ -199,25 +243,29 @@ impl App {
                     .speed(0.1)
                     .suffix(" s"),
             );
-            if ui.button("Apply to all").clicked() {
+            if ui.button("Apply to all steps").clicked() {
                 apply_all = true;
             }
         });
+        if apply_all {
+            let d = self.anim_default_dur;
+            for v in &mut self.anim_js_durs {
+                *v = d;
+            }
+        }
 
         if changed {
             self.recompute_js_diff();
         }
         ui.separator();
 
-        let from_set = self.anim_js_from.is_some();
-        let to_set = self.anim_js_to.is_some();
-        let default_dur = self.anim_default_dur;
+        let all_set = self.anim_js_files.iter().all(|f| f.is_some());
 
         if let Some(diff) = &mut self.anim_js_diff {
             let changing = diff.changing_count();
             let mut summary = format!(
-                "{} identical (kept static)  ·  {} changing",
-                diff.same_count, changing
+                "{} keyframes  ·  {} identical (kept static)  ·  {} changing",
+                diff.keyframes, diff.same_count, changing
             );
             if diff.added > 0 || diff.removed > 0 {
                 summary.push_str(&format!(
@@ -228,22 +276,19 @@ impl App {
             ui.label(summary);
             ui.add_space(4.0);
 
-            if apply_all {
-                for r in diff.rows.iter_mut() {
-                    r.dur = default_dur;
-                }
-            }
-
             if changing == 0 {
-                ui.label(egui::RichText::new("These two files have no differing curves.").weak());
+                ui.label(egui::RichText::new("These keyframes have no differing curves.").weak());
             } else {
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     egui::Grid::new("anim_js_grid")
-                        .num_columns(4)
+                        .num_columns(3)
                         .striped(true)
                         .spacing([14.0, 6.0])
                         .show(ui, |ui| {
-                            grid_header(ui, "Curve");
+                            ui.label(egui::RichText::new("On").strong());
+                            ui.label(egui::RichText::new("Curve").strong());
+                            ui.label(egui::RichText::new("Change").strong());
+                            ui.end_row();
                             for r in diff.rows.iter_mut() {
                                 let morphable = matches!(r.kind, JsDiffKind::Morph);
                                 ui.add_enabled_ui(morphable, |ui| {
@@ -251,13 +296,6 @@ impl App {
                                 });
                                 row_label(ui, r.color, &r.label);
                                 ui.label(r.kind.label());
-                                ui.add_enabled(
-                                    r.enabled && morphable,
-                                    egui::DragValue::new(&mut r.dur)
-                                        .range(0.1..=60.0)
-                                        .speed(0.1)
-                                        .suffix(" s"),
-                                );
                                 ui.end_row();
                             }
                         });
@@ -269,7 +307,7 @@ impl App {
                 .rows
                 .iter()
                 .any(|r| matches!(r.kind, JsDiffKind::Morph) && r.enabled);
-            let ready = from_set && to_set && any_morph;
+            let ready = all_set && any_morph;
             if ui
                 .add_enabled(ready, egui::Button::new("✨ Generate animated JS"))
                 .clicked()
@@ -277,7 +315,9 @@ impl App {
                 do_generate = true;
             }
         } else {
-            ui.label(egui::RichText::new("Pick two Desmos JS files above to compare.").weak());
+            ui.label(
+                egui::RichText::new("Pick a Desmos JS file for every keyframe to compare.").weak(),
+            );
         }
         do_generate
     }
@@ -297,11 +337,12 @@ impl App {
     }
 
     fn recompute_js_diff(&mut self) {
-        let (Some(a), Some(b)) = (self.anim_js_from.clone(), self.anim_js_to.clone()) else {
+        let paths: Vec<PathBuf> = self.anim_js_files.iter().flatten().cloned().collect();
+        if paths.len() < 2 || paths.len() != self.anim_js_files.len() {
             self.anim_js_diff = None;
             return;
-        };
-        match anim_js::load_js_diff(&a, &b, self.anim_default_dur) {
+        }
+        match anim_js::load_js_seq(&paths) {
             Ok(diff) => self.anim_js_diff = Some(diff),
             Err(e) => {
                 self.anim_js_diff = None;
@@ -327,7 +368,7 @@ impl App {
         let Some(diff) = &self.anim_js_diff else {
             return;
         };
-        let js = anim_js::build_animated_js(diff);
+        let js = anim_js::build_animated_js(diff, &self.anim_js_durs);
         let stem = format!("{}-morph", self.export_name);
         let path = build_named_path(&stem, JS_EXPORT_DIR, "js");
         self.last_msg = Some(match std::fs::write(&path, js) {

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
@@ -23,13 +23,13 @@ pub struct JsRow {
     pub label: String,
     pub color: [u8; 3],
     pub kind: JsDiffKind,
-    pub dur: f32,
     pub enabled: bool,
 }
 
 pub struct JsDiff {
     pub items_a: Vec<Value>,
-    pub to_rhs: HashMap<String, String>,
+    pub keyframes: usize,
+    pub to_rhs: HashMap<String, Vec<String>>,
     pub rows: Vec<JsRow>,
     pub same_count: usize,
     pub added: usize,
@@ -54,12 +54,17 @@ pub fn list_js_files(dir: &str) -> Vec<PathBuf> {
     out
 }
 
-pub fn load_js_diff(a: &Path, b: &Path, default_dur: f32) -> Result<JsDiff, String> {
-    let text_a = std::fs::read_to_string(a).map_err(|e| format!("read A: {e}"))?;
-    let text_b = std::fs::read_to_string(b).map_err(|e| format!("read B: {e}"))?;
-    let items_a = parse_js(&text_a)?;
-    let items_b = parse_js(&text_b)?;
-    Ok(compute_js_diff(items_a, items_b, default_dur))
+pub fn load_js_seq(paths: &[PathBuf]) -> Result<JsDiff, String> {
+    if paths.len() < 2 {
+        return Err("Pick at least two keyframes".to_string());
+    }
+    let mut files = Vec::with_capacity(paths.len());
+    for p in paths {
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+        let text = std::fs::read_to_string(p).map_err(|e| format!("read {name}: {e}"))?;
+        files.push(parse_js(&text).map_err(|e| format!("{name}: {e}"))?);
+    }
+    Ok(compute_js_diff(files))
 }
 
 pub fn parse_js(text: &str) -> Result<Vec<Value>, String> {
@@ -141,38 +146,57 @@ fn curves_of(lists: &BTreeMap<String, (String, [u8; 3])>) -> BTreeMap<String, Ve
     out
 }
 
-pub fn compute_js_diff(items_a: Vec<Value>, items_b: Vec<Value>, default_dur: f32) -> JsDiff {
-    let a_lists = data_lists(&items_a);
-    let b_lists = data_lists(&items_b);
-    let a_curves = curves_of(&a_lists);
-    let b_curves = curves_of(&b_lists);
-    let b_keys: BTreeSet<&String> = b_curves.keys().collect();
-    let a_keys: BTreeSet<&String> = a_curves.keys().collect();
+pub fn compute_js_diff(files: Vec<Vec<Value>>) -> JsDiff {
+    let keyframes = files.len();
+    if keyframes == 0 {
+        return JsDiff {
+            items_a: Vec::new(),
+            keyframes: 0,
+            to_rhs: HashMap::new(),
+            rows: Vec::new(),
+            same_count: 0,
+            added: 0,
+            removed: 0,
+        };
+    }
+
+    let lists: Vec<BTreeMap<String, (String, [u8; 3])>> =
+        files.iter().map(|f| data_lists(f)).collect();
+    let curves: Vec<BTreeMap<String, Vec<String>>> = lists.iter().map(curves_of).collect();
+    let first_lists = &lists[0];
+    let first_curves = &curves[0];
+    let later_lists = &lists[1..];
+    let later_curves = &curves[1..];
 
     let mut rows = Vec::new();
-    let mut to_rhs = HashMap::new();
+    let mut to_rhs: HashMap<String, Vec<String>> = HashMap::new();
     let mut same_count = 0;
+    let mut removed = 0;
 
-    for (key, vars) in &a_curves {
-        if !b_keys.contains(key) {
+    for (key, vars) in first_curves {
+        if !later_curves.iter().all(|c| c.contains_key(key)) {
+            removed += 1;
             continue;
         }
         let mut any_diff = false;
         let mut morphable = true;
         for var in vars {
-            let a_rhs = &a_lists[var].0;
-            match b_lists.get(var) {
-                Some((b_rhs, _)) => {
-                    if a_rhs != b_rhs {
-                        any_diff = true;
+            let (a_rhs, _) = &first_lists[var];
+            let a_pts = count_pts(a_rhs);
+            for l in later_lists {
+                match l.get(var) {
+                    Some((rhs, _)) => {
+                        if rhs != a_rhs {
+                            any_diff = true;
+                        }
+                        if count_pts(rhs) != a_pts {
+                            morphable = false;
+                        }
                     }
-                    if count_pts(a_rhs) != count_pts(b_rhs) {
+                    None => {
+                        any_diff = true;
                         morphable = false;
                     }
-                }
-                None => {
-                    any_diff = true;
-                    morphable = false;
                 }
             }
         }
@@ -180,13 +204,12 @@ pub fn compute_js_diff(items_a: Vec<Value>, items_b: Vec<Value>, default_dur: f3
             same_count += 1;
             continue;
         }
-        let color = a_lists[&vars[0]].1;
+        let color = first_lists[&vars[0]].1;
         let label = vars.iter().min().cloned().unwrap_or_else(|| key.clone());
         let kind = if morphable {
             for var in vars {
-                if let Some((b_rhs, _)) = b_lists.get(var) {
-                    to_rhs.insert(var.clone(), b_rhs.clone());
-                }
+                let seq: Vec<String> = later_lists.iter().map(|l| l[var].0.clone()).collect();
+                to_rhs.insert(var.clone(), seq);
             }
             JsDiffKind::Morph
         } else {
@@ -197,16 +220,26 @@ pub fn compute_js_diff(items_a: Vec<Value>, items_b: Vec<Value>, default_dur: f3
             label,
             color,
             kind,
-            dur: default_dur,
             enabled: true,
         });
     }
 
-    let added = b_keys.difference(&a_keys).count();
-    let removed = a_keys.difference(&b_keys).count();
+    let a_keys: BTreeSet<&String> = first_curves.keys().collect();
+    let mut added_keys: BTreeSet<&String> = BTreeSet::new();
+    for c in later_curves {
+        for k in c.keys() {
+            if !a_keys.contains(k) {
+                added_keys.insert(k);
+            }
+        }
+    }
+    let added = added_keys.len();
+
+    let items_a = files.into_iter().next().unwrap_or_default();
 
     JsDiff {
         items_a,
+        keyframes,
         to_rhs,
         rows,
         same_count,
@@ -225,21 +258,30 @@ fn max_id(items: &[Value]) -> u32 {
         .unwrap_or(1)
 }
 
-pub fn build_animated_js(diff: &JsDiff) -> String {
-    let mut items = diff.items_a.clone();
-
-    let mut slider_of: HashMap<String, String> = HashMap::new();
-    let mut sliders: Vec<(String, f32)> = Vec::new();
-    let mut k = 1u32;
-    for row in &diff.rows {
-        if matches!(row.kind, JsDiffKind::Morph) && row.enabled {
-            let svar = format!("m_{{orph{k}}}");
-            slider_of.insert(row.curve_key.clone(), svar.clone());
-            sliders.push((svar, row.dur));
-            k += 1;
-        }
+fn fmt_secs(v: f32) -> String {
+    let mut s = format!("{v:.3}");
+    while s.ends_with('0') {
+        s.pop();
     }
+    if s.ends_with('.') {
+        s.pop();
+    }
+    s
+}
 
+pub fn build_animated_js(diff: &JsDiff, durs: &[f32]) -> String {
+    let mut items = diff.items_a.clone();
+    let n_seg = diff.keyframes.saturating_sub(1);
+    let seg_dur = |i: usize| durs.get(i).copied().unwrap_or(2.0).max(0.1);
+
+    let enabled: BTreeSet<&str> = diff
+        .rows
+        .iter()
+        .filter(|r| matches!(r.kind, JsDiffKind::Morph) && r.enabled)
+        .map(|r| r.curve_key.as_str())
+        .collect();
+
+    let mut any_morph = false;
     for it in items.iter_mut() {
         let replacement = {
             let Some(latex) = it.get("latex").and_then(|v| v.as_str()) else {
@@ -251,46 +293,62 @@ pub fn build_animated_js(diff: &JsDiff) -> String {
             let Some(key) = curve_key(var) else {
                 continue;
             };
-            match (slider_of.get(&key), diff.to_rhs.get(var)) {
-                (Some(svar), Some(to)) => Some(format!(
-                    "{var}=\\left(1-{svar}\\right)\\cdot{from_rhs}+{svar}\\cdot{to}"
-                )),
-                _ => None,
+            if !enabled.contains(key.as_str()) {
+                continue;
             }
+            let Some(seq) = diff.to_rhs.get(var) else {
+                continue;
+            };
+            let mut vals: Vec<&str> = Vec::with_capacity(seq.len() + 1);
+            vals.push(from_rhs);
+            vals.extend(seq.iter().map(|s| s.as_str()));
+            let mut out = format!("{var}={from_rhs}");
+            let mut start = 0.0f32;
+            for i in 0..vals.len().saturating_sub(1) {
+                let d = seg_dur(i);
+                let frac = if i == 0 {
+                    format!("\\frac{{m_{{orph}}}}{{{}}}", fmt_secs(d))
+                } else {
+                    format!("\\frac{{m_{{orph}}-{}}}{{{}}}", fmt_secs(start), fmt_secs(d))
+                };
+                out.push_str(&format!(
+                    "+\\min\\left(\\max\\left({frac},0\\right),1\\right)\\cdot\\left({}-{}\\right)",
+                    vals[i + 1],
+                    vals[i]
+                ));
+                start += d;
+            }
+            out
         };
-        if let Some(new_latex) = replacement {
-            if let Some(obj) = it.as_object_mut() {
-                obj.insert("latex".to_string(), Value::String(new_latex));
-            }
+        any_morph = true;
+        if let Some(obj) = it.as_object_mut() {
+            obj.insert("latex".to_string(), Value::String(replacement));
         }
     }
 
-    if !sliders.is_empty() {
+    if any_morph && n_seg > 0 {
+        let total: f32 = (0..n_seg).map(seg_dur).sum();
         let mut next = max_id(&items) + 1;
         let folder_id = next.to_string();
         next += 1;
         items.push(json!({ "type": "folder", "id": folder_id, "title": "Morph" }));
-        for (svar, dur) in &sliders {
-            let id = next.to_string();
-            next += 1;
-            let period = (dur.max(0.1) * 1000.0).round() as u64;
-            items.push(json!({
-                "type": "expression",
-                "id": id,
-                "folderId": folder_id,
-                "color": "#000000",
-                "latex": format!("{svar}=0"),
-                "slider": {
-                    "hardMin": true,
-                    "hardMax": true,
-                    "min": "0",
-                    "max": "1",
-                    "loopMode": "LOOP_FORWARD_REVERSE",
-                    "isPlaying": true,
-                    "animationPeriod": period
-                }
-            }));
-        }
+        let period = (total * 1000.0).round() as u64;
+        items.push(json!({
+            "type": "expression",
+            "id": next.to_string(),
+            "folderId": folder_id,
+            "color": "#000000",
+            "latex": "m_{orph}=0",
+            "slider": {
+                "hardMin": true,
+                "hardMax": true,
+                "min": "0",
+                "max": fmt_secs(total),
+                "loopMode": "LOOP_FORWARD_REVERSE",
+                "isPlaying": true,
+                "animationPeriod": period
+            }
+        }));
     }
 
     render_js_values(&items)
@@ -300,7 +358,7 @@ fn render_js_values(items: &[Value]) -> String {
     let mut out = String::new();
     out.push_str("// Erika -> Desmos morph export. Paste into the browser console on a Desmos graph.\n");
     out.push_str("// Requires the global `Calc` (open https://www.desmos.com/calculator).\n");
-    out.push_str("// The m_orph# sliders auto-play (ping-pong) and morph each changed line.\n");
+    out.push_str("// The m_orph slider auto-plays (ping-pong) and morphs each changed line through the keyframes.\n");
     out.push_str("(function () {\n");
     out.push_str("  if (typeof Calc === \"undefined\") {\n");
     out.push_str("    console.error(\"Desmos `Calc` not found - open a Desmos calculator first.\");\n");
@@ -357,6 +415,18 @@ mod tests {
         ])
     }
 
+    fn js_c() -> String {
+        wrap(&[
+            r##"{ "type": "folder", "id": "2", "title": "Face" }"##,
+            r##"{ "type": "expression", "id": "5", "folderId": "2", "color": "#ff0000", "latex": "A_{1}=[(0,0)]" }"##,
+            r##"{ "type": "expression", "id": "6", "folderId": "2", "color": "#ff0000", "latex": "A_{2}=[(1,1)]" }"##,
+            r##"{ "type": "expression", "id": "7", "folderId": "2", "color": "#ff0000", "latex": "A_{3}=[(2,0)]" }"##,
+            r##"{ "type": "expression", "id": "8", "folderId": "2", "color": "#0000ff", "latex": "A_{11}=[(1,1)]" }"##,
+            r##"{ "type": "expression", "id": "9", "folderId": "2", "color": "#0000ff", "latex": "A_{12}=[(2,2)]" }"##,
+            r##"{ "type": "expression", "id": "10", "folderId": "2", "color": "#0000ff", "latex": "A_{13}=[(3,1)]" }"##,
+        ])
+    }
+
     #[test]
     fn parse_reads_all_items() {
         let items = parse_js(&js_a()).unwrap();
@@ -368,7 +438,7 @@ mod tests {
     fn diff_finds_only_the_changed_curve() {
         let a = parse_js(&js_a()).unwrap();
         let b = parse_js(&js_b()).unwrap();
-        let diff = compute_js_diff(a, b, 2.0);
+        let diff = compute_js_diff(vec![a, b]);
         assert_eq!(diff.same_count, 1);
         assert_eq!(diff.changing_count(), 1);
         assert!(matches!(diff.rows[0].kind, JsDiffKind::Morph));
@@ -380,23 +450,42 @@ mod tests {
     fn build_adds_pingpong_slider_and_interpolation() {
         let a = parse_js(&js_a()).unwrap();
         let b = parse_js(&js_b()).unwrap();
-        let diff = compute_js_diff(a, b, 3.5);
-        let js = build_animated_js(&diff);
+        let diff = compute_js_diff(vec![a, b]);
+        let js = build_animated_js(&diff, &[3.5]);
         assert!(js.contains("\"title\": \"Morph\"") || js.contains("\"title\":\"Morph\""));
-        assert!(js.contains("m_{orph1}=0"));
+        assert!(js.contains("m_{orph}=0"));
         assert!(js.contains("LOOP_FORWARD_REVERSE"));
         assert!(js.contains("\"animationPeriod\":3500"));
-        assert!(js.contains("1-m_{orph1}"));
+        assert!(js.contains("\"max\":\"3.5\""));
+        assert!(js.contains("\\\\frac{m_{orph}}{3.5}"));
         assert!(js.contains("[(9,9)]"));
         assert!(js.contains("[(5,5)]"));
+    }
+
+    #[test]
+    fn three_keyframes_use_per_step_durations() {
+        let a = parse_js(&js_a()).unwrap();
+        let b = parse_js(&js_b()).unwrap();
+        let c = parse_js(&js_c()).unwrap();
+        let diff = compute_js_diff(vec![a, b, c]);
+        assert_eq!(diff.keyframes, 3);
+        assert_eq!(diff.same_count, 1);
+        assert_eq!(diff.changing_count(), 1);
+        let js = build_animated_js(&diff, &[1.0, 2.5]);
+        assert!(js.contains("\\\\frac{m_{orph}}{1}"));
+        assert!(js.contains("\\\\frac{m_{orph}-1}{2.5}"));
+        assert!(js.contains("\\\\left([(9,9)]-[(5,5)]\\\\right)"));
+        assert!(js.contains("\\\\left([(1,1)]-[(9,9)]\\\\right)"));
+        assert!(js.contains("\"animationPeriod\":3500"));
+        assert!(js.contains("\"max\":\"3.5\""));
     }
 
     #[test]
     fn unchanged_curve_is_not_rewritten() {
         let a = parse_js(&js_a()).unwrap();
         let b = parse_js(&js_b()).unwrap();
-        let diff = compute_js_diff(a, b, 2.0);
-        let js = build_animated_js(&diff);
+        let diff = compute_js_diff(vec![a, b]);
+        let js = build_animated_js(&diff, &[2.0]);
         assert!(js.contains("A_{1}=[(0,0)]"));
     }
 
@@ -404,9 +493,9 @@ mod tests {
     fn disabled_row_produces_no_slider() {
         let a = parse_js(&js_a()).unwrap();
         let b = parse_js(&js_b()).unwrap();
-        let mut diff = compute_js_diff(a, b, 2.0);
+        let mut diff = compute_js_diff(vec![a, b]);
         diff.rows[0].enabled = false;
-        let js = build_animated_js(&diff);
+        let js = build_animated_js(&diff, &[2.0]);
         assert!(!js.contains("LOOP_FORWARD_REVERSE"));
         assert!(js.contains("A_{11}=[(5,5)]"));
     }
@@ -423,12 +512,27 @@ mod tests {
             r##"{ "type": "expression", "id": "7", "folderId": "2", "color": "#ff0000", "latex": "A_{3}=[(2,0)]" }"##,
         ]);
         let b = parse_js(&b_text).unwrap();
-        let diff = compute_js_diff(a, b, 2.0);
+        let diff = compute_js_diff(vec![a, b]);
         let mismatch = diff
             .rows
             .iter()
             .find(|r| r.curve_key == "A_1")
             .expect("changed curve");
         assert!(matches!(mismatch.kind, JsDiffKind::StructMismatch));
+    }
+
+    #[test]
+    fn curve_missing_in_a_later_keyframe_is_not_animated() {
+        let a = parse_js(&js_a()).unwrap();
+        let b = parse_js(&js_b()).unwrap();
+        let c_text = wrap(&[
+            r##"{ "type": "expression", "id": "5", "folderId": "2", "color": "#ff0000", "latex": "A_{1}=[(0,0)]" }"##,
+            r##"{ "type": "expression", "id": "6", "folderId": "2", "color": "#ff0000", "latex": "A_{2}=[(1,1)]" }"##,
+            r##"{ "type": "expression", "id": "7", "folderId": "2", "color": "#ff0000", "latex": "A_{3}=[(2,0)]" }"##,
+        ]);
+        let c = parse_js(&c_text).unwrap();
+        let diff = compute_js_diff(vec![a, b, c]);
+        assert_eq!(diff.removed, 1);
+        assert!(diff.rows.iter().all(|r| r.curve_key != "A_1"));
     }
 }

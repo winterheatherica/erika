@@ -698,12 +698,12 @@ mod tests {
         let tb = build_js_output(&b, &groups, &[]);
         let ia = anim_js::parse_js(&ta).expect("parse A");
         let ib = anim_js::parse_js(&tb).expect("parse B");
-        let diff = anim_js::compute_js_diff(ia, ib, 2.5);
+        let diff = anim_js::compute_js_diff(vec![ia, ib]);
         assert_eq!(diff.same_count, 1, "curve a unchanged");
         assert_eq!(diff.changing_count(), 1, "curve b changed");
-        let out = anim_js::build_animated_js(&diff);
+        let out = anim_js::build_animated_js(&diff, &[2.5]);
         assert!(out.contains("LOOP_FORWARD_REVERSE"));
-        assert!(out.contains("1-m_{orph1}"));
+        assert!(out.contains("\\\\frac{m_{orph}}{2.5}"));
         assert!(out.contains("\"animationPeriod\":2500"));
         assert!(out.contains("A_{1}=[(0,0)]"), "unchanged curve stays static");
     }
