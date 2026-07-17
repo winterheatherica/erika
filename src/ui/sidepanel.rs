@@ -276,6 +276,8 @@ impl App {
         let mut to_duplicate: Option<usize> = None;
         let mut click: Option<(usize, bool, bool)> = None;
         let mut toggle_select: Option<usize> = None;
+        let mut start_drag: Option<usize> = None;
+        let mut drop_dst: Option<usize> = None;
         let mut bulk_copy = false;
         let mut group_changed = false;
         let mut to_forward: Option<usize> = None;
@@ -372,11 +374,12 @@ impl App {
             .small()
             .weak(),
         );
+        let dragging_row = self.dragging_curve_row;
         for (i, c) in self.curves.iter_mut().enumerate() {
             if !show_all && c.group_id != active_group {
                 continue;
             }
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
                 let mut checked = self.multi_select.contains(&i);
                 if ui
                     .checkbox(&mut checked, "")
@@ -385,12 +388,21 @@ impl App {
                 {
                     toggle_select = Some(i);
                 }
-                ui.label(
-                    egui::RichText::new(format!("{:>2}", i + 1))
-                        .monospace()
-                        .weak(),
-                )
-                .on_hover_text("Global layer position");
+                let num = ui
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("{:>2}", i + 1))
+                                .monospace()
+                                .weak(),
+                        )
+                        .selectable(false)
+                        .sense(egui::Sense::drag()),
+                    )
+                    .on_hover_text("Global layer position. Drag onto another row to move this curve there.")
+                    .on_hover_cursor(egui::CursorIcon::Grab);
+                if num.drag_started() {
+                    start_drag = Some(i);
+                }
                 let _ = ui.color_edit_button_srgb(&mut c.color);
                 ui.checkbox(&mut c.visible, "").on_hover_text("Visible");
                 let kind_tag = match c.kind {
@@ -465,6 +477,34 @@ impl App {
                     }
                 });
             });
+            if let Some(src) = dragging_row {
+                if src != i {
+                    if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                        if row.response.rect.contains(pos) {
+                            drop_dst = Some(i);
+                            ui.painter().rect_stroke(
+                                row.response.rect,
+                                2.0,
+                                egui::Stroke::new(1.5, ui.visuals().selection.bg_fill),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(src) = self.dragging_curve_row {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            if let Some(c) = self.curves.get(src) {
+                let name = c.name.clone();
+                egui::show_tooltip_at_pointer(
+                    ui.ctx(),
+                    ui.layer_id(),
+                    egui::Id::new("curve_drag_tip"),
+                    |ui| {
+                        ui.label(format!("Moving: {name}"));
+                    },
+                );
+            }
         }
         if let Some((i, ctrl, shift)) = click {
             self.handle_curve_click(i, ctrl, shift, active_group);
@@ -475,6 +515,18 @@ impl App {
             }
         }
         let mut structural = group_changed;
+        if let Some(src) = self.dragging_curve_row {
+            if ui.input(|inp| inp.pointer.any_released()) {
+                if let Some(dst) = drop_dst {
+                    self.move_curve_to(src, dst);
+                    structural = true;
+                }
+                self.dragging_curve_row = None;
+            }
+        }
+        if let Some(i) = start_drag {
+            self.dragging_curve_row = Some(i);
+        }
         if let Some(i) = to_forward {
             self.move_curve_forward(i);
             structural = true;

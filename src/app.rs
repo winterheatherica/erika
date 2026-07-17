@@ -132,6 +132,7 @@ pub struct App {
     pub(crate) scale: f32,
 
     pub(crate) dragging_handle: Option<HandleId>,
+    pub(crate) dragging_curve_row: Option<usize>,
     pub(crate) dragging_image: bool,
     pub(crate) drag_image_offset: Vec2,
     pub(crate) dragging_selection: bool,
@@ -228,6 +229,7 @@ impl App {
             center_y: 0.0,
             scale: 70.0,
             dragging_handle: None,
+            dragging_curve_row: None,
             dragging_image: false,
             drag_image_offset: Vec2::ZERO,
             dragging_selection: false,
@@ -411,6 +413,7 @@ impl App {
 
     fn cancel_interactions(&mut self) {
         self.dragging_handle = None;
+        self.dragging_curve_row = None;
         self.dragging_image = false;
         self.dragging_selection = false;
         self.dragging_rotation = false;
@@ -795,6 +798,15 @@ impl App {
         let c = self.curves.remove(i);
         self.curves.push(c);
         self.remap_selected_after_move(i, last);
+    }
+
+    pub(crate) fn move_curve_to(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.curves.len() || to >= self.curves.len() {
+            return;
+        }
+        let c = self.curves.remove(from);
+        self.curves.insert(to, c);
+        self.remap_selected_after_move(from, to);
     }
 
     pub(crate) fn move_curve_to_back(&mut self, i: usize) {
@@ -1284,6 +1296,30 @@ mod tests {
         app.duplicate_curves(&[]);
         app.duplicate_curves(&[99]);
         assert_eq!(app.curves.len(), before, "no-op on empty or bad indices");
+    }
+
+    #[test]
+    fn move_curve_to_places_curve_at_target_index() {
+        use crate::model::curve::{CurveSet, PALETTE};
+        let mut app = super::App::new();
+        app.curves[0].name = "a".to_string();
+        for name in ["b", "c", "d"] {
+            app.curves.push(CurveSet::empty(name, PALETTE[1]));
+        }
+        app.selected = 0;
+
+        app.move_curve_to(0, 2);
+        let names: Vec<&str> = app.curves.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["b", "c", "a", "d"]);
+        assert_eq!(app.selected, 2, "selection follows the moved curve");
+
+        app.move_curve_to(3, 0);
+        let names: Vec<&str> = app.curves.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["d", "b", "c", "a"]);
+
+        app.move_curve_to(9, 0);
+        let names: Vec<&str> = app.curves.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["d", "b", "c", "a"], "out of range is a no-op");
     }
 
     #[test]
