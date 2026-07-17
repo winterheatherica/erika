@@ -196,16 +196,13 @@ fn build_js_output_opts(
         folder_plan.push((title.clone(), plots));
     }
 
-    if folder_plan
-        .iter()
-        .any(|(_, plots)| plots.iter().any(|p| p.fill.is_some()))
-    {
-        let fill_folder = fresh_id(&mut next_id);
-        items.push(Item::Folder {
-            id: fill_folder.clone(),
-            title: "Fill".to_string(),
-        });
-        for (_, plots) in &folder_plan {
+    for (name, plots) in &folder_plan {
+        if plots.iter().any(|p| p.fill.is_some()) {
+            let fill_folder = fresh_id(&mut next_id);
+            items.push(Item::Folder {
+                id: fill_folder.clone(),
+                title: format!("Fill {name}"),
+            });
             for p in plots {
                 if let Some((color, opacity, latex)) = &p.fill {
                     items.push(Item::Expr {
@@ -221,9 +218,6 @@ fn build_js_output_opts(
                 }
             }
         }
-    }
-
-    for (name, plots) in &folder_plan {
         let folder_id = fresh_id(&mut next_id);
         items.push(Item::Folder {
             id: folder_id.clone(),
@@ -566,7 +560,7 @@ mod tests {
 
         let out = build_js_output(&curves, &groups, &[]);
 
-        assert!(out.contains("\"title\": \"Fill\""));
+        assert!(out.contains("\"title\": \"Fill Face\""));
         let fill = out
             .lines()
             .find(|l| l.contains("\"lines\": false"))
@@ -592,9 +586,32 @@ mod tests {
         let curves = vec![c];
 
         let out = build_js_output(&curves, &groups, &[]);
-        let fill_pos = out.find("\"title\": \"Fill\"").expect("Fill folder");
+        let fill_pos = out.find("\"title\": \"Fill Face\"").expect("Fill Face folder");
         let face_pos = out.find("\"title\": \"Face\"").expect("Face folder");
         assert!(fill_pos < face_pos, "Fill folder should be emitted first (behind)");
+    }
+
+    #[test]
+    fn fills_interleave_per_folder_in_layer_order() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let mut face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        face.fill_enabled = true;
+        let mut front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        front.fill_enabled = true;
+        let curves = vec![back, face, front];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(!out.contains("\"title\": \"Fill Hair 1\""), "no fill folder without fills");
+        let h1 = out.find("\"title\": \"Hair 1\"").expect("Hair 1");
+        let ff = out.find("\"title\": \"Fill Face\"").expect("Fill Face");
+        let fa = out.find("\"title\": \"Face\"").expect("Face");
+        let fh2 = out.find("\"title\": \"Fill Hair 2\"").expect("Fill Hair 2");
+        let h2 = out.find("\"title\": \"Hair 2\"").expect("Hair 2");
+        assert!(
+            h1 < ff && ff < fa && fa < fh2 && fh2 < h2,
+            "each fill folder sits right behind its stroke folder"
+        );
     }
 
     #[test]
