@@ -403,65 +403,67 @@ impl App {
                     let mods = ui.input(|inp| inp.modifiers);
                     click = Some((i, mods.command || mods.ctrl, mods.shift));
                 }
-                let prev_group = c.group_id;
-                let group_label = c
-                    .group_id
-                    .and_then(|id| {
-                        groups_info
-                            .iter()
-                            .find(|(gid, _)| *gid == id)
-                            .map(|(_, n)| n.as_str())
-                    })
-                    .unwrap_or("(none)");
-                egui::ComboBox::from_id_salt(format!("grp_{i}"))
-                    .selected_text(group_label)
-                    .width(80.0)
-                    .show_ui(ui, |ui| {
-                        for (gid, gname) in &groups_info {
-                            ui.selectable_value(&mut c.group_id, Some(*gid), gname);
-                        }
-                    });
-                if c.group_id != prev_group {
-                    group_changed = true;
-                }
-                if ui
-                    .add_enabled(i + 1 < total, egui::Button::new("▲").small())
-                    .on_hover_text("Bring forward (draw on top of next)")
-                    .clicked()
-                {
-                    to_forward = Some(i);
-                }
-                if ui
-                    .add_enabled(i > 0, egui::Button::new("▼").small())
-                    .on_hover_text("Send backward (draw behind previous)")
-                    .clicked()
-                {
-                    to_backward = Some(i);
-                }
-                if ui
-                    .add_enabled(i + 1 < total, egui::Button::new("⏫").small())
-                    .on_hover_text("Bring to front (draw on top of everything)")
-                    .clicked()
-                {
-                    to_front = Some(i);
-                }
-                if ui
-                    .add_enabled(i > 0, egui::Button::new("⏬").small())
-                    .on_hover_text("Send to back (draw behind everything)")
-                    .clicked()
-                {
-                    to_back = Some(i);
-                }
-                if ui
-                    .add(egui::Button::new("copy").small())
-                    .on_hover_text("Duplicate this curve (name gets \"-copy\")")
-                    .clicked()
-                {
-                    to_duplicate = Some(i);
-                }
-                if ui.small_button("🗑").clicked() {
-                    to_delete = Some(i);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("🗑").clicked() {
+                        to_delete = Some(i);
+                    }
+                    if ui
+                        .add(egui::Button::new("copy").small())
+                        .on_hover_text("Duplicate this curve (name gets \"-copy\")")
+                        .clicked()
+                    {
+                        to_duplicate = Some(i);
+                    }
+                    if ui
+                        .add_enabled(i > 0, egui::Button::new("⏬").small())
+                        .on_hover_text("Send to back (draw behind everything)")
+                        .clicked()
+                    {
+                        to_back = Some(i);
+                    }
+                    if ui
+                        .add_enabled(i + 1 < total, egui::Button::new("⏫").small())
+                        .on_hover_text("Bring to front (draw on top of everything)")
+                        .clicked()
+                    {
+                        to_front = Some(i);
+                    }
+                    if ui
+                        .add_enabled(i > 0, egui::Button::new("▼").small())
+                        .on_hover_text("Send backward (draw behind previous)")
+                        .clicked()
+                    {
+                        to_backward = Some(i);
+                    }
+                    if ui
+                        .add_enabled(i + 1 < total, egui::Button::new("▲").small())
+                        .on_hover_text("Bring forward (draw on top of next)")
+                        .clicked()
+                    {
+                        to_forward = Some(i);
+                    }
+                    let prev_group = c.group_id;
+                    let group_label = c
+                        .group_id
+                        .and_then(|id| {
+                            groups_info
+                                .iter()
+                                .find(|(gid, _)| *gid == id)
+                                .map(|(_, n)| n.as_str())
+                        })
+                        .unwrap_or("(none)");
+                    egui::ComboBox::from_id_salt(format!("grp_{i}"))
+                        .selected_text(group_label)
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            for (gid, gname) in &groups_info {
+                                ui.selectable_value(&mut c.group_id, Some(*gid), gname);
+                            }
+                        });
+                    if c.group_id != prev_group {
+                        group_changed = true;
+                    }
+                });
             });
         }
         if let Some((i, ctrl, shift)) = click {
