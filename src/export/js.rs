@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::model::curve::{CurveKind, CurveSet, Group};
@@ -100,21 +101,7 @@ fn build_js_output_opts(
         });
     }
 
-    let mut folders: Vec<(usize, Vec<usize>)> = groups
-        .iter()
-        .enumerate()
-        .filter_map(|(gi, _)| {
-            let members: Vec<usize> = curves
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| group_index_of(c, groups) == gi && is_exportable(c))
-                .map(|(i, _)| i)
-                .collect();
-            (!members.is_empty()).then_some((gi, members))
-        })
-        .collect();
-
-    folders.sort_by_key(|(_, members)| members[0]);
+    let folders = plan_folders(curves, groups);
 
     if timelapse {
         let folder_count = folders.len();
@@ -154,11 +141,12 @@ fn build_js_output_opts(
     }
 
     let mut folder_plan: Vec<(String, Vec<CurvePlot>)> = Vec::new();
-    for (f, (gi, members)) in folders.iter().enumerate() {
+    let mut bez_counters: HashMap<usize, usize> = HashMap::new();
+    for (f, (gi, title, members)) in folders.iter().enumerate() {
         let g = &groups[*gi];
         let folder_units: usize = members.iter().map(|&ci| curves[ci].draw_units()).sum();
         let mut offset = 0usize;
-        let mut bez_idx = 0usize;
+        let bez_idx = bez_counters.entry(*gi).or_insert(0);
         let mut plots: Vec<CurvePlot> = Vec::new();
 
         for &ci in members {
@@ -166,8 +154,8 @@ fn build_js_output_opts(
             let stroke_color = hex(c.color);
             let plot = match c.kind {
                 CurveKind::Bezier => {
-                    let idx = bez_idx;
-                    bez_idx += 1;
+                    let idx = *bez_idx;
+                    *bez_idx += 1;
                     let gate = if timelapse {
                         folder_bezier_gate(f, folder_units, offset)
                     } else {
@@ -205,7 +193,7 @@ fn build_js_output_opts(
             plots.push(plot);
             offset += c.draw_units();
         }
-        folder_plan.push((g.name.clone(), plots));
+        folder_plan.push((title.clone(), plots));
     }
 
     if folder_plan
@@ -276,6 +264,37 @@ fn fresh_id(next: &mut u32) -> String {
     let v = next.to_string();
     *next += 1;
     v
+}
+
+fn plan_folders(curves: &[CurveSet], groups: &[Group]) -> Vec<(usize, String, Vec<usize>)> {
+    let mut runs: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (i, c) in curves.iter().enumerate() {
+        if !is_exportable(c) {
+            continue;
+        }
+        let gi = group_index_of(c, groups);
+        match runs.last_mut() {
+            Some((last, members)) if *last == gi => members.push(i),
+            _ => runs.push((gi, vec![i])),
+        }
+    }
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for (gi, _) in &runs {
+        *counts.entry(*gi).or_insert(0) += 1;
+    }
+    let mut seen: HashMap<usize, usize> = HashMap::new();
+    runs.into_iter()
+        .map(|(gi, members)| {
+            let title = if counts[&gi] > 1 {
+                let k = seen.entry(gi).or_insert(0);
+                *k += 1;
+                format!("{} {}", groups[gi].name, k)
+            } else {
+                groups[gi].name.clone()
+            };
+            (gi, title, members)
+        })
+        .collect()
 }
 
 fn group_index_of(c: &CurveSet, groups: &[Group]) -> usize {
@@ -631,6 +650,67 @@ mod tests {
             bottom_pos < top_pos,
             "folder with the bottom-most curve should be emitted first"
         );
+    }
+
+    #[test]
+    fn interleaved_groups_split_into_numbered_folders() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        let h1 = out.find("\"title\": \"Hair 1\"").expect("Hair 1 folder");
+        let fa = out.find("\"title\": \"Face\"").expect("Face folder");
+        let h2 = out.find("\"title\": \"Hair 2\"").expect("Hair 2 folder");
+        assert!(h1 < fa && fa < h2, "folders follow layer order, bottom first");
+        assert!(!out.contains("\"title\": \"Hair\" "), "no unnumbered Hair folder");
+        assert!(!out.contains("\"title\": \"Face 1\""), "contiguous group keeps its name");
+    }
+
+    #[test]
+    fn split_group_keeps_distinct_data_variables() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(out.contains("A_{1}=[(0,0)]"), "first Hair curve keeps index 1");
+        assert!(out.contains("A_{11}=[(6,6)]"), "second Hair curve continues at index 11");
+    }
+
+    #[test]
+    fn contiguous_group_stays_one_plain_folder() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let front = bezier("front", 1, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let face = bezier("face", 2, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, front, face];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(out.contains("\"title\": \"Hair\""));
+        assert!(!out.contains("\"title\": \"Hair 1\""));
+        assert!(!out.contains("\"title\": \"Hair 2\""));
+    }
+
+    #[test]
+    fn timelapse_splits_interleaved_groups_and_reveals_in_layer_order() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        assert!(out.contains("\"title\": \"Hair 1\""));
+        assert!(out.contains("\"title\": \"Hair 2\""));
+        assert!(out.contains("\"max\": \"3\""), "slider counts three folders");
+        assert!(out.contains("t\\\\le q\\\\left(0,1\\\\right)"), "Hair 1 draws first");
+        assert!(out.contains("t\\\\le q\\\\left(1,1\\\\right)"), "Face draws second");
+        assert!(out.contains("t\\\\le q\\\\left(2,1\\\\right)"), "Hair 2 draws last");
     }
 
     #[test]
