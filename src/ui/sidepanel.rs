@@ -55,6 +55,23 @@ impl App {
 
         let mut remove_group_id: Option<u64> = None;
         let mut activate_group_id: Option<u64> = None;
+        let mut activate_show_all = false;
+        ui.horizontal(|ui| {
+            if ui
+                .radio(active.is_none(), "")
+                .on_hover_text("Show every curve across all folders")
+                .clicked()
+            {
+                activate_show_all = true;
+            }
+            ui.label("👁");
+            ui.label(egui::RichText::new("Show All").strong());
+            ui.label(
+                egui::RichText::new(format!("({})", self.curves.len()))
+                    .small()
+                    .weak(),
+            );
+        });
         let can_delete = self.groups.len() > 1;
         for g in &mut self.groups {
             ui.horizontal(|ui| {
@@ -89,6 +106,9 @@ impl App {
                     remove_group_id = Some(g.id);
                 }
             });
+        }
+        if activate_show_all {
+            self.set_show_all_group();
         }
         if let Some(id) = activate_group_id {
             self.set_active_group(id);
@@ -245,7 +265,9 @@ impl App {
                 self.curves.push(new_curve);
                 self.selected = self.curves.len() - 1;
                 self.multi_select.clear();
-                self.active_group_id = target_group;
+                if self.active_group_id.is_some() {
+                    self.active_group_id = target_group;
+                }
                 self.new_curve_name.clear();
             }
         });
@@ -262,15 +284,18 @@ impl App {
         let mut to_back: Option<usize> = None;
         let total = self.curves.len();
         let active_group = self.active_group_id;
+        let show_all = active_group.is_none();
         let active_count = self
             .curves
             .iter()
-            .filter(|c| c.group_id == active_group)
+            .filter(|c| show_all || c.group_id == active_group)
             .count();
         ui.label(
-            egui::RichText::new(
-                "Active folder only. Number = global layer (gaps = layers in other folders). Low = behind, high = in front.",
-            )
+            egui::RichText::new(if show_all {
+                "All folders (Show All). Number = global layer. Low = behind, high = in front."
+            } else {
+                "Active folder only. Number = global layer (gaps = layers in other folders). Low = behind, high = in front."
+            })
             .small()
             .weak(),
         );
@@ -313,7 +338,7 @@ impl App {
                     .curves
                     .iter()
                     .enumerate()
-                    .filter(|(_, c)| c.group_id == ag)
+                    .filter(|(_, c)| ag.is_none() || c.group_id == ag)
                     .map(|(i, _)| i)
                     .collect();
                 for i in idxs {
@@ -348,7 +373,7 @@ impl App {
             .weak(),
         );
         for (i, c) in self.curves.iter_mut().enumerate() {
-            if c.group_id != active_group {
+            if !show_all && c.group_id != active_group {
                 continue;
             }
             ui.horizontal(|ui| {
@@ -493,7 +518,7 @@ impl App {
         }
         let sel = self.selected.min(self.curves.len() - 1);
         self.selected = sel;
-        if self.curves[sel].group_id != self.active_group_id {
+        if self.active_group_id.is_some() && self.curves[sel].group_id != self.active_group_id {
             ui.label(
                 egui::RichText::new("No curve selected in this folder.")
                     .italics()
@@ -682,7 +707,7 @@ impl App {
             return;
         }
         let sel = self.selected.min(self.curves.len() - 1);
-        if self.curves[sel].group_id != self.active_group_id {
+        if self.active_group_id.is_some() && self.curves[sel].group_id != self.active_group_id {
             return;
         }
         match self.curves[sel].kind {

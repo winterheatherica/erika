@@ -755,6 +755,10 @@ impl App {
         }
     }
 
+    pub(crate) fn set_show_all_group(&mut self) {
+        self.active_group_id = None;
+    }
+
     pub(crate) fn set_active_group(&mut self, id: u64) {
         self.active_group_id = Some(id);
         self.new_curve_group_id = Some(id);
@@ -939,7 +943,7 @@ impl App {
                 .curves
                 .iter()
                 .enumerate()
-                .filter(|(_, c)| c.group_id == active_group)
+                .filter(|(_, c)| active_group.is_none() || c.group_id == active_group)
                 .map(|(idx, _)| idx)
                 .collect();
             match (
