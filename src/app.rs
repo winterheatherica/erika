@@ -189,9 +189,10 @@ pub struct App {
     pub(crate) new_curve_kind: crate::model::curve::CurveKind,
     pub(crate) current_project_path: Option<PathBuf>,
 
-    pub(crate) undo_stack: Vec<Vec<CurveSet>>,
-    pub(crate) redo_stack: Vec<Vec<CurveSet>>,
+    pub(crate) undo_stack: Vec<(Vec<CurveSet>, Vec<Group>)>,
+    pub(crate) redo_stack: Vec<(Vec<CurveSet>, Vec<Group>)>,
     pub(crate) last_committed_curves: Vec<CurveSet>,
+    pub(crate) last_committed_groups: Vec<Group>,
 
     pub(crate) playback_active: bool,
     pub(crate) playback_progress: f32,
@@ -281,6 +282,7 @@ impl App {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_committed_curves: initial,
+            last_committed_groups: vec![default_group],
             playback_active: false,
             playback_progress: 1.0,
             playback_duration_secs: 5.0,
@@ -380,9 +382,10 @@ impl App {
     }
 
     pub(crate) fn commit_if_changed(&mut self) {
-        if self.curves != self.last_committed_curves {
-            let prev = std::mem::replace(&mut self.last_committed_curves, self.curves.clone());
-            self.undo_stack.push(prev);
+        if self.curves != self.last_committed_curves || self.groups != self.last_committed_groups {
+            let prev_c = std::mem::replace(&mut self.last_committed_curves, self.curves.clone());
+            let prev_g = std::mem::replace(&mut self.last_committed_groups, self.groups.clone());
+            self.undo_stack.push((prev_c, prev_g));
             self.redo_stack.clear();
             if self.undo_stack.len() > 200 {
                 self.undo_stack.remove(0);
@@ -392,22 +395,46 @@ impl App {
 
     pub(crate) fn undo(&mut self) {
         self.commit_if_changed();
-        if let Some(prev) = self.undo_stack.pop() {
-            let now = std::mem::replace(&mut self.curves, prev.clone());
-            self.redo_stack.push(now);
-            self.last_committed_curves = prev;
+        if let Some((prev_c, prev_g)) = self.undo_stack.pop() {
+            let now_c = std::mem::replace(&mut self.curves, prev_c.clone());
+            let now_g = std::mem::replace(&mut self.groups, prev_g.clone());
+            self.redo_stack.push((now_c, now_g));
+            self.last_committed_curves = prev_c;
+            self.last_committed_groups = prev_g;
             self.cancel_interactions();
             self.clamp_selection();
+            self.reconcile_group_refs();
         }
     }
 
     pub(crate) fn redo(&mut self) {
-        if let Some(next) = self.redo_stack.pop() {
-            let now = std::mem::replace(&mut self.curves, next.clone());
-            self.undo_stack.push(now);
-            self.last_committed_curves = next;
+        if let Some((next_c, next_g)) = self.redo_stack.pop() {
+            let now_c = std::mem::replace(&mut self.curves, next_c.clone());
+            let now_g = std::mem::replace(&mut self.groups, next_g.clone());
+            self.undo_stack.push((now_c, now_g));
+            self.last_committed_curves = next_c;
+            self.last_committed_groups = next_g;
             self.cancel_interactions();
             self.clamp_selection();
+            self.reconcile_group_refs();
+        }
+    }
+
+    fn reconcile_group_refs(&mut self) {
+        let first = self.groups.first().map(|g| g.id);
+        let exists = |id: u64, groups: &[Group]| groups.iter().any(|g| g.id == id);
+        if let Some(id) = self.active_group_id {
+            if !exists(id, &self.groups) {
+                self.active_group_id = first;
+            }
+        }
+        match self.new_curve_group_id {
+            Some(id) if exists(id, &self.groups) => {}
+            _ => self.new_curve_group_id = first,
+        }
+        let max_id = self.groups.iter().map(|g| g.id).max().unwrap_or(0);
+        if self.next_group_id <= max_id {
+            self.next_group_id = max_id + 1;
         }
     }
 
@@ -713,6 +740,7 @@ impl App {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.last_committed_curves = self.curves.clone();
+        self.last_committed_groups = self.groups.clone();
         self.sync_created_at();
     }
 
@@ -745,11 +773,13 @@ impl App {
         };
         self.groups.remove(pos);
         let fallback_id = self.groups[0].id;
-        for c in &mut self.curves {
-            if c.group_id == Some(group_id) {
-                c.group_id = Some(fallback_id);
-            }
+        self.curves.retain(|c| c.group_id != Some(group_id));
+        if self.curves.is_empty() {
+            let mut c = CurveSet::empty("Curve 1", PALETTE[0]);
+            c.group_id = Some(fallback_id);
+            self.curves.push(c);
         }
+        self.clamp_selection();
         if self.new_curve_group_id == Some(group_id) {
             self.new_curve_group_id = Some(fallback_id);
         }
@@ -1296,6 +1326,69 @@ mod tests {
         app.duplicate_curves(&[]);
         app.duplicate_curves(&[99]);
         assert_eq!(app.curves.len(), before, "no-op on empty or bad indices");
+    }
+
+    #[test]
+    fn remove_group_deletes_its_curves() {
+        use crate::model::curve::{CurveSet, PALETTE};
+        let mut app = super::App::new();
+        let g2 = app.add_group();
+        let mut c = CurveSet::empty("in-g2", PALETTE[1]);
+        c.group_id = Some(g2);
+        app.curves.push(c);
+        let before = app.curves.len();
+
+        app.remove_group(g2);
+
+        assert_eq!(app.curves.len(), before - 1);
+        assert!(app.curves.iter().all(|c| c.group_id != Some(g2)));
+        assert!(app.groups.iter().all(|g| g.id != g2));
+    }
+
+    #[test]
+    fn remove_group_holding_every_curve_leaves_a_default_curve() {
+        let mut app = super::App::new();
+        let g1 = app.groups[0].id;
+        let g2 = app.add_group();
+
+        app.remove_group(g1);
+
+        assert_eq!(app.curves.len(), 1, "a fresh default curve is created");
+        assert_eq!(app.curves[0].group_id, Some(g2));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn undo_restores_deleted_group_and_its_curves() {
+        use crate::model::curve::{CurveSet, PALETTE};
+        let mut app = super::App::new();
+        let g2 = app.add_group();
+        let mut c = CurveSet::empty("in-g2", PALETTE[1]);
+        c.group_id = Some(g2);
+        app.curves.push(c);
+        app.commit_if_changed();
+
+        app.remove_group(g2);
+        app.commit_if_changed();
+        app.undo();
+
+        assert!(app.groups.iter().any(|g| g.id == g2), "group restored");
+        assert!(
+            app.curves.iter().any(|c| c.group_id == Some(g2)),
+            "curves restored into their group"
+        );
+
+        app.redo();
+        assert!(app.groups.iter().all(|g| g.id != g2), "redo removes it again");
+        assert!(app.curves.iter().all(|c| c.group_id != Some(g2)));
+        assert!(
+            app.active_group_id.is_none()
+                || app
+                    .groups
+                    .iter()
+                    .any(|g| Some(g.id) == app.active_group_id),
+            "active group stays valid"
+        );
     }
 
     #[test]

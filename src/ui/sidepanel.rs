@@ -98,7 +98,7 @@ impl App {
                 ui.label(egui::RichText::new(format!("({count})")).small().weak());
                 let del = ui.add_enabled(can_delete, egui::Button::new("🗑").small());
                 let del = if can_delete {
-                    del.on_hover_text("Delete group (curves reassigned to first remaining)")
+                    del.on_hover_text("Delete group and every curve inside it (Ctrl+Z to undo)")
                 } else {
                     del.on_hover_text("Cannot delete the last remaining group")
                 };

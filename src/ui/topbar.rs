@@ -74,8 +74,9 @@ impl App {
 
     fn edit_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Edit", |ui| {
-            let undo_enabled =
-                !self.undo_stack.is_empty() || self.curves != self.last_committed_curves;
+            let undo_enabled = !self.undo_stack.is_empty()
+                || self.curves != self.last_committed_curves
+                || self.groups != self.last_committed_groups;
             let redo_enabled = !self.redo_stack.is_empty();
             if ui
                 .add_enabled(undo_enabled, egui::Button::new("↶ Undo"))
