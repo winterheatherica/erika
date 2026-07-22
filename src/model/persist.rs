@@ -46,6 +46,8 @@ pub struct ExportSettings {
     pub samples: usize,
     #[serde(default)]
     pub timelapse: bool,
+    #[serde(default = "default_grouped")]
+    pub grouped: bool,
     #[serde(default)]
     pub frame: Option<[f32; 4]>,
     #[serde(default)]
@@ -61,6 +63,7 @@ impl Default for ExportSettings {
             transparent: false,
             samples: default_export_samples(),
             timelapse: false,
+            grouped: true,
             frame: None,
             frame_lock: false,
         }
@@ -75,6 +78,9 @@ fn default_export_dim() -> u32 {
 }
 fn default_export_samples() -> usize {
     64
+}
+fn default_grouped() -> bool {
+    true
 }
 
 fn default_version() -> u32 {

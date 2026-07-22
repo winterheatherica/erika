@@ -280,6 +280,16 @@ impl App {
                 "Animate the drawing folder by folder with a play slider (S). \
                  Speed follows the Time-lapse Duration in the left panel.",
             );
+            ui.horizontal(|ui| {
+                ui.label("Layout:");
+                ui.selectable_value(&mut self.js_grouped, true, "Grouped")
+                    .on_hover_text("One Desmos folder per group, fills in front of each folder");
+                ui.selectable_value(&mut self.js_grouped, false, "Non-grouped")
+                    .on_hover_text(
+                        "No art folders: every curve is emitted bottom to top as fill then \
+                         line, so stacking matches the canvas exactly",
+                    );
+            });
             if ui.button("Export JS").clicked() {
                 let path = build_named_path(&self.export_name, JS_EXPORT_DIR, "js");
                 let template_path = PathBuf::from(TEX_TEMPLATE_PATH);
@@ -288,6 +298,7 @@ impl App {
                     template_path: &template_path,
                     timelapse: self.js_timelapse,
                     duration_secs: self.playback_duration_secs,
+                    grouped: self.js_grouped,
                 };
                 self.last_msg = Some(match export_js(&self.curves, &self.groups, &cfg) {
                     Ok(()) => format!("Exported JS → {}", path.display()),

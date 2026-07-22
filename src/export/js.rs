@@ -9,6 +9,7 @@ pub struct JsConfig<'a> {
     pub template_path: &'a Path,
     pub timelapse: bool,
     pub duration_secs: f32,
+    pub grouped: bool,
 }
 
 const PLOT_DOMAIN_MAX: usize = 99;
@@ -32,6 +33,7 @@ pub fn export_js(curves: &[CurveSet], groups: &[Group], cfg: &JsConfig) -> Resul
         &template_lines,
         cfg.timelapse,
         cfg.duration_secs,
+        cfg.grouped,
     );
 
     if let Some(parent) = cfg.path.parent() {
@@ -50,7 +52,7 @@ enum Item {
     },
     Expr {
         id: String,
-        folder_id: String,
+        folder_id: Option<String>,
         color: String,
         latex: String,
         parametric_max: Option<usize>,
@@ -70,7 +72,7 @@ enum Item {
 
 #[cfg(test)]
 fn build_js_output(curves: &[CurveSet], groups: &[Group], template_lines: &[String]) -> String {
-    build_js_output_opts(curves, groups, template_lines, false, 5.0)
+    build_js_output_opts(curves, groups, template_lines, false, 5.0, true)
 }
 
 fn build_js_output_opts(
@@ -79,6 +81,7 @@ fn build_js_output_opts(
     template_lines: &[String],
     timelapse: bool,
     duration_secs: f32,
+    grouped: bool,
 ) -> String {
     let mut items: Vec<Item> = Vec::new();
     let mut next_id: u32 = 2;
@@ -91,7 +94,7 @@ fn build_js_output_opts(
     for line in template_lines.iter() {
         items.push(Item::Expr {
             id: fresh_id(&mut next_id),
-            folder_id: template_folder.clone(),
+            folder_id: Some(template_folder.clone()),
             color: "#000000".to_string(),
             latex: line.clone(),
             parametric_max: None,
@@ -121,7 +124,7 @@ fn build_js_output_opts(
         });
         items.push(Item::Expr {
             id: fresh_id(&mut next_id),
-            folder_id: tl_folder,
+            folder_id: Some(tl_folder),
             color: "#000000".to_string(),
             latex: "q\\left(f,u\\right)=u\\min\\left(\\max\\left(S-f,0\\right),1\\right)"
                 .to_string(),
@@ -196,18 +199,68 @@ fn build_js_output_opts(
         folder_plan.push((title.clone(), plots));
     }
 
-    for (name, plots) in &folder_plan {
-        if plots.iter().any(|p| p.fill.is_some()) {
-            let fill_folder = fresh_id(&mut next_id);
+    if grouped {
+        for (name, plots) in &folder_plan {
+            if plots.iter().any(|p| p.fill.is_some()) {
+                let fill_folder = fresh_id(&mut next_id);
+                items.push(Item::Folder {
+                    id: fill_folder.clone(),
+                    title: format!("Fill {name}"),
+                });
+                for p in plots {
+                    if let Some((color, opacity, latex)) = &p.fill {
+                        items.push(Item::Expr {
+                            id: fresh_id(&mut next_id),
+                            folder_id: Some(fill_folder.clone()),
+                            color: color.clone(),
+                            latex: latex.clone(),
+                            parametric_max: p.parametric_max,
+                            hidden: false,
+                            fill_opacity: Some(*opacity),
+                            lines: false,
+                        });
+                    }
+                }
+            }
+            let folder_id = fresh_id(&mut next_id);
             items.push(Item::Folder {
-                id: fill_folder.clone(),
-                title: format!("Fill {name}"),
+                id: folder_id.clone(),
+                title: name.clone(),
             });
+            for p in plots {
+                items.push(Item::Expr {
+                    id: fresh_id(&mut next_id),
+                    folder_id: Some(folder_id.clone()),
+                    color: p.stroke_color.clone(),
+                    latex: p.latex.clone(),
+                    parametric_max: p.parametric_max,
+                    hidden: false,
+                    fill_opacity: None,
+                    lines: true,
+                });
+            }
+            for p in plots {
+                for latex in &p.data_latex {
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: Some(folder_id.clone()),
+                        color: p.stroke_color.clone(),
+                        latex: latex.clone(),
+                        parametric_max: None,
+                        hidden: true,
+                        fill_opacity: None,
+                        lines: true,
+                    });
+                }
+            }
+        }
+    } else {
+        for (_, plots) in &folder_plan {
             for p in plots {
                 if let Some((color, opacity, latex)) = &p.fill {
                     items.push(Item::Expr {
                         id: fresh_id(&mut next_id),
-                        folder_id: fill_folder.clone(),
+                        folder_id: None,
                         color: color.clone(),
                         latex: latex.clone(),
                         parametric_max: p.parametric_max,
@@ -216,37 +269,32 @@ fn build_js_output_opts(
                         lines: false,
                     });
                 }
-            }
-        }
-        let folder_id = fresh_id(&mut next_id);
-        items.push(Item::Folder {
-            id: folder_id.clone(),
-            title: name.clone(),
-        });
-        for p in plots {
-            items.push(Item::Expr {
-                id: fresh_id(&mut next_id),
-                folder_id: folder_id.clone(),
-                color: p.stroke_color.clone(),
-                latex: p.latex.clone(),
-                parametric_max: p.parametric_max,
-                hidden: false,
-                fill_opacity: None,
-                lines: true,
-            });
-        }
-        for p in plots {
-            for latex in &p.data_latex {
                 items.push(Item::Expr {
                     id: fresh_id(&mut next_id),
-                    folder_id: folder_id.clone(),
+                    folder_id: None,
                     color: p.stroke_color.clone(),
-                    latex: latex.clone(),
-                    parametric_max: None,
-                    hidden: true,
+                    latex: p.latex.clone(),
+                    parametric_max: p.parametric_max,
+                    hidden: false,
                     fill_opacity: None,
                     lines: true,
                 });
+            }
+        }
+        for (_, plots) in &folder_plan {
+            for p in plots {
+                for latex in &p.data_latex {
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: None,
+                        color: p.stroke_color.clone(),
+                        latex: latex.clone(),
+                        parametric_max: None,
+                        hidden: true,
+                        fill_opacity: None,
+                        lines: true,
+                    });
+                }
             }
         }
     }
@@ -389,6 +437,10 @@ fn render_js(items: &[Item]) -> String {
                 lines,
             } => {
                 let hidden_attr = if *hidden { ", \"hidden\": true" } else { "" };
+                let folder_attr = match folder_id {
+                    Some(fid) => format!(", \"folderId\": \"{fid}\""),
+                    None => String::new(),
+                };
                 let domain = match parametric_max {
                     Some(max) => format!(
                         ", \"parametricDomain\": {{ \"min\": \"0\", \"max\": \"{max}\" }}"
@@ -401,9 +453,9 @@ fn render_js(items: &[Item]) -> String {
                 };
                 let lines_attr = if *lines { "" } else { ", \"lines\": false" };
                 format!(
-                    "  {{ \"type\": \"expression\", \"id\": \"{}\", \"folderId\": \"{}\", \"color\": \"{}\"{}, \"latex\": \"{}\"{}{}{} }}",
+                    "  {{ \"type\": \"expression\", \"id\": \"{}\"{}, \"color\": \"{}\"{}, \"latex\": \"{}\"{}{}{} }}",
                     id,
-                    folder_id,
+                    folder_attr,
                     color,
                     hidden_attr,
                     js_escape(latex),
@@ -621,7 +673,7 @@ mod tests {
         c.fill_enabled = true;
         let curves = vec![c];
 
-        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0, true);
         let fill = out
             .lines()
             .find(|l| l.contains("\"lines\": false"))
@@ -721,7 +773,7 @@ mod tests {
         let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
         let curves = vec![back, face, front];
 
-        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0, true);
         assert!(out.contains("\"title\": \"Hair 1\""));
         assert!(out.contains("\"title\": \"Hair 2\""));
         assert!(out.contains("\"max\": \"3\""), "slider counts three folders");
@@ -739,7 +791,7 @@ mod tests {
             &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0), (2.0, 0.0, 3.0, 1.0, 4.0, 0.0)],
         )];
 
-        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0);
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0, true);
         assert!(out.contains("\"title\": \"Time-lapse\""));
         assert!(out.contains("\"latex\": \"S=0\""));
         assert!(out.contains("\"slider\""));
@@ -761,7 +813,7 @@ mod tests {
         );
         let curves = vec![a, b];
 
-        let out = build_js_output_opts(&curves, &groups, &[], true, 3.0);
+        let out = build_js_output_opts(&curves, &groups, &[], true, 3.0, true);
         assert!(out.contains("\"max\": \"1\""));
         assert!(out.contains("t\\\\le q\\\\left(0,3\\\\right)-1\\\\right\\\\}"));
     }
@@ -773,10 +825,86 @@ mod tests {
         let b = bezier("b", 2, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
         let curves = vec![a, b];
 
-        let out = build_js_output_opts(&curves, &groups, &[], true, 4.0);
+        let out = build_js_output_opts(&curves, &groups, &[], true, 4.0, true);
         assert!(out.contains("\"max\": \"2\""));
         assert!(out.contains("t\\\\le q\\\\left(0,1\\\\right)"));
         assert!(out.contains("t\\\\le q\\\\left(1,1\\\\right)"));
+    }
+
+    #[test]
+    fn non_grouped_export_has_no_art_folders() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let mut face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        face.fill_enabled = true;
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output_opts(&curves, &groups, &[], false, 5.0, false);
+        assert!(!out.contains("\"title\": \"Hair"));
+        assert!(!out.contains("\"title\": \"Face"));
+        assert!(!out.contains("\"title\": \"Fill"));
+        assert!(out.contains("\"title\": \"Template\""), "Template folder stays");
+        let plot = out
+            .lines()
+            .find(|l| l.contains("B_{x}\\\\left(A_{1}"))
+            .expect("plot line");
+        assert!(!plot.contains("folderId"), "art lines live at the top level");
+    }
+
+    #[test]
+    fn non_grouped_export_emits_fill_then_line_per_curve_in_layer_order() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let mut back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        back.fill_enabled = true;
+        let mut face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        face.fill_enabled = true;
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output_opts(&curves, &groups, &[], false, 5.0, false);
+        let lines: Vec<&str> = out.lines().collect();
+        let pos = |pred: &dyn Fn(&str) -> bool| {
+            lines
+                .iter()
+                .position(|l| pred(l))
+                .expect("expected line present")
+        };
+        let back_fill =
+            pos(&|l| l.contains("B_{x}\\\\left(A_{1},") && l.contains("\"lines\": false"));
+        let back_line =
+            pos(&|l| l.contains("B_{x}\\\\left(A_{1},") && !l.contains("\"lines\": false"));
+        let face_fill =
+            pos(&|l| l.contains("B_{x}\\\\left(B_{1},") && l.contains("\"lines\": false"));
+        let face_line =
+            pos(&|l| l.contains("B_{x}\\\\left(B_{1},") && !l.contains("\"lines\": false"));
+        let front_line =
+            pos(&|l| l.contains("B_{x}\\\\left(A_{11},") && !l.contains("\"lines\": false"));
+        assert!(
+            back_fill < back_line
+                && back_line < face_fill
+                && face_fill < face_line
+                && face_line < front_line,
+            "order is fill,line per curve from bottom layer to top"
+        );
+        assert!(out.contains("A_{1}=[(0,0)]"), "data lists still emitted");
+    }
+
+    #[test]
+    fn non_grouped_timelapse_still_gates_strokes_by_run() {
+        let groups = vec![Group::new(1, "Hair", "A"), Group::new(2, "Face", "B")];
+        let back = bezier("back", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        let face = bezier("face", 2, &[(3.0, 3.0, 4.0, 4.0, 5.0, 3.0)]);
+        let front = bezier("front", 1, &[(6.0, 6.0, 7.0, 7.0, 8.0, 6.0)]);
+        let curves = vec![back, face, front];
+
+        let out = build_js_output_opts(&curves, &groups, &[], true, 5.0, false);
+        assert!(out.contains("\"title\": \"Time-lapse\""));
+        assert!(out.contains("\"max\": \"3\""));
+        assert!(out.contains("t\\\\le q\\\\left(0,1\\\\right)"));
+        assert!(out.contains("t\\\\le q\\\\left(1,1\\\\right)"));
+        assert!(out.contains("t\\\\le q\\\\left(2,1\\\\right)"));
+        assert!(!out.contains("\"title\": \"Hair"));
     }
 
     #[test]
@@ -809,7 +937,7 @@ mod tests {
     fn non_timelapse_export_has_no_slider_or_gate() {
         let groups = vec![Group::new(1, "Face", "A")];
         let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
-        let out = build_js_output_opts(&curves, &groups, &[], false, 5.0);
+        let out = build_js_output_opts(&curves, &groups, &[], false, 5.0, true);
         assert!(!out.contains("\"slider\""));
         assert!(!out.contains("Time-lapse"));
         assert!(!out.contains("q\\\\left(f,u"));

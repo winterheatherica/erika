@@ -183,6 +183,7 @@ pub struct App {
     pub(crate) export_frame: Option<[f32; 4]>,
     pub(crate) export_frame_lock: bool,
     pub(crate) js_timelapse: bool,
+    pub(crate) js_grouped: bool,
     pub(crate) last_msg: Option<String>,
 
     pub(crate) new_curve_name: String,
@@ -275,6 +276,7 @@ impl App {
             export_frame: None,
             export_frame_lock: false,
             js_timelapse: false,
+            js_grouped: true,
             last_msg: None,
             new_curve_name: String::new(),
             new_curve_kind: crate::model::curve::CurveKind::Bezier,
@@ -678,6 +680,7 @@ impl App {
                 transparent: self.export_transparent,
                 samples: self.export_samples,
                 timelapse: self.js_timelapse,
+                grouped: self.js_grouped,
                 frame: self.export_frame,
                 frame_lock: self.export_frame_lock,
             },
@@ -737,6 +740,7 @@ impl App {
         self.export_frame = p.export.frame;
         self.export_frame_lock = p.export.frame_lock;
         self.js_timelapse = p.export.timelapse;
+        self.js_grouped = p.export.grouped;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.last_committed_curves = self.curves.clone();
