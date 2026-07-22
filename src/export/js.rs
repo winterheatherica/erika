@@ -137,6 +137,7 @@ fn build_js_output_opts(
 
     struct CurvePlot {
         stroke_color: String,
+        stroke: bool,
         latex: String,
         parametric_max: Option<usize>,
         data_latex: Vec<String>,
@@ -170,8 +171,9 @@ fn build_js_output_opts(
                         .map(|op| (fill_hex(c), op, bezier_plot_latex_restricted(&g.tex_param, idx, "")));
                     CurvePlot {
                         stroke_color,
+                        stroke: c.stroke_visible,
                         latex,
-                        parametric_max: Some(PLOT_DOMAIN_MAX),
+                        parametric_max: Some(PLOT_DOMAIN_MAX.max(c.n())),
                         data_latex,
                         fill,
                     }
@@ -186,6 +188,7 @@ fn build_js_output_opts(
                     let fill = fill_opacity_for(c).map(|op| (fill_hex(c), op, ellipse_fill_latex(c)));
                     CurvePlot {
                         stroke_color,
+                        stroke: c.stroke_visible,
                         latex,
                         parametric_max: None,
                         data_latex: Vec::new(),
@@ -228,6 +231,9 @@ fn build_js_output_opts(
                 title: name.clone(),
             });
             for p in plots {
+                if !p.stroke {
+                    continue;
+                }
                 items.push(Item::Expr {
                     id: fresh_id(&mut next_id),
                     folder_id: Some(folder_id.clone()),
@@ -269,16 +275,18 @@ fn build_js_output_opts(
                         lines: false,
                     });
                 }
-                items.push(Item::Expr {
-                    id: fresh_id(&mut next_id),
-                    folder_id: None,
-                    color: p.stroke_color.clone(),
-                    latex: p.latex.clone(),
-                    parametric_max: p.parametric_max,
-                    hidden: false,
-                    fill_opacity: None,
-                    lines: true,
-                });
+                if p.stroke {
+                    items.push(Item::Expr {
+                        id: fresh_id(&mut next_id),
+                        folder_id: None,
+                        color: p.stroke_color.clone(),
+                        latex: p.latex.clone(),
+                        parametric_max: p.parametric_max,
+                        hidden: false,
+                        fill_opacity: None,
+                        lines: true,
+                    });
+                }
             }
         }
         for (_, plots) in &folder_plan {
@@ -567,6 +575,24 @@ mod tests {
     }
 
     #[test]
+    fn plot_domain_grows_past_99_for_long_curves() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let segs: Vec<(f32, f32, f32, f32, f32, f32)> = (0..120)
+            .map(|i| {
+                let x = i as f32;
+                (x, 0.0, x + 0.5, 1.0, x + 1.0, 0.0)
+            })
+            .collect();
+        let curves = vec![bezier("long", 1, &segs)];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        assert!(
+            out.contains("\"parametricDomain\": { \"min\": \"0\", \"max\": \"120\" }"),
+            "a 120 segment curve keeps drawing past t=99"
+        );
+    }
+
+    #[test]
     fn segment_data_lists_are_hidden() {
         let groups = vec![Group::new(1, "Face", "A")];
         let curves = vec![bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)])];
@@ -684,6 +710,25 @@ mod tests {
             .find(|l| l.contains("B_{x}\\\\left(A_{1}") && !l.contains("\"lines\": false"))
             .expect("stroke plot");
         assert!(stroke.contains("q\\\\left(0,1\\\\right)"), "strokes stay gated");
+    }
+
+    #[test]
+    fn hidden_stroke_exports_fill_only() {
+        let groups = vec![Group::new(1, "Face", "A")];
+        let mut c = bezier("a", 1, &[(0.0, 0.0, 1.0, 1.0, 2.0, 0.0)]);
+        c.fill_enabled = true;
+        c.fill_color = [10, 20, 30, 255];
+        c.stroke_visible = false;
+        let curves = vec![c];
+
+        let out = build_js_output(&curves, &groups, &[]);
+        let plots: Vec<&str> = out
+            .lines()
+            .filter(|l| l.contains("B_{x}\\\\left(A_{1}") && !l.contains("\"hidden\": true"))
+            .collect();
+        assert_eq!(plots.len(), 1, "only the fill plot is emitted");
+        assert!(plots[0].contains("\"lines\": false"));
+        assert!(out.contains("A_{1}=[(0,0)]"), "data lists still exported");
     }
 
     #[test]

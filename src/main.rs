@@ -1,6 +1,7 @@
 mod app;
 mod export;
 mod model;
+mod trace;
 mod ui;
 
 use app::App;

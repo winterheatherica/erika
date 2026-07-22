@@ -146,7 +146,7 @@ pub(crate) fn bezier_data_latex(c: &CurveSet, tex_param: &str, idx: usize) -> Ve
         .collect()
 }
 
-fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
+pub(crate) fn subscript_parts(tex_param: &str, idx: usize) -> (char, String, String, String) {
     let cleaned: String = tex_param.chars().filter(|c| !c.is_whitespace()).collect();
     let mut chars = cleaned.chars();
     let letter = chars.next().unwrap_or('A');

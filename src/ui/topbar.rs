@@ -50,6 +50,14 @@ impl App {
                 self.show_animate = true;
             }
 
+            if ui
+                .button("Trace")
+                .on_hover_text("Turn a black & white image into Bézier curves")
+                .clicked()
+            {
+                self.show_trace = true;
+            }
+
             let msg = self.last_msg.clone();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(msg) = &msg {

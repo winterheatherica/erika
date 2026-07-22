@@ -162,6 +162,15 @@ pub struct App {
     pub(crate) gallery_search: String,
     pub(crate) thumb_cache: std::collections::HashMap<PathBuf, Option<egui::TextureHandle>>,
 
+    pub(crate) show_trace: bool,
+    pub(crate) trace_image: Option<PathBuf>,
+    pub(crate) trace_threshold: u8,
+    pub(crate) trace_invert: bool,
+    pub(crate) trace_min_area: usize,
+    pub(crate) trace_simplify: f32,
+    pub(crate) trace_corner_deg: f32,
+    pub(crate) trace_fill: bool,
+
     pub(crate) show_animate: bool,
     pub(crate) anim_format: AnimFormat,
     pub(crate) anim_from: Option<PathBuf>,
@@ -170,6 +179,8 @@ pub struct App {
     pub(crate) anim_diff: Option<crate::export::anim::AnimDiff>,
     pub(crate) anim_js_files: Vec<Option<PathBuf>>,
     pub(crate) anim_js_durs: Vec<f32>,
+    pub(crate) anim_js_normalize: bool,
+    pub(crate) anim_js_points: usize,
     pub(crate) anim_js_diff: Option<crate::export::anim_js::JsDiff>,
 
     pub(crate) color_pick_target: Option<ColorPickTarget>,
@@ -257,6 +268,14 @@ impl App {
             show_gallery: false,
             gallery_search: String::new(),
             thumb_cache: std::collections::HashMap::new(),
+            show_trace: false,
+            trace_image: None,
+            trace_threshold: 128,
+            trace_invert: false,
+            trace_min_area: 64,
+            trace_simplify: 1.5,
+            trace_corner_deg: 60.0,
+            trace_fill: false,
             show_animate: false,
             anim_format: AnimFormat::Svg,
             anim_from: None,
@@ -265,6 +284,8 @@ impl App {
             anim_diff: None,
             anim_js_files: vec![None, None],
             anim_js_durs: vec![2.0],
+            anim_js_normalize: false,
+            anim_js_points: 48,
             anim_js_diff: None,
             color_pick_target: None,
             last_picked_color: None,
@@ -1193,6 +1214,10 @@ impl eframe::App for App {
 
         if self.show_animate {
             self.animate_window(ctx);
+        }
+
+        if self.show_trace {
+            self.trace_window(ctx);
         }
 
         let undo = ctx.input_mut(|i| {

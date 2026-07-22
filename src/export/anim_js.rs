@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
+use crate::export::anim_norm;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JsDiffKind {
     Morph,
@@ -29,7 +31,7 @@ pub struct JsRow {
 pub struct JsDiff {
     pub items_a: Vec<Value>,
     pub keyframes: usize,
-    pub to_rhs: HashMap<String, Vec<String>>,
+    pub values: HashMap<String, Vec<String>>,
     pub rows: Vec<JsRow>,
     pub same_count: usize,
     pub added: usize,
@@ -54,7 +56,7 @@ pub fn list_js_files(dir: &str) -> Vec<PathBuf> {
     out
 }
 
-pub fn load_js_seq(paths: &[PathBuf]) -> Result<JsDiff, String> {
+pub fn load_js_seq(paths: &[PathBuf], normalize: Option<usize>) -> Result<JsDiff, String> {
     if paths.len() < 2 {
         return Err("Pick at least two keyframes".to_string());
     }
@@ -64,7 +66,10 @@ pub fn load_js_seq(paths: &[PathBuf]) -> Result<JsDiff, String> {
         let text = std::fs::read_to_string(p).map_err(|e| format!("read {name}: {e}"))?;
         files.push(parse_js(&text).map_err(|e| format!("{name}: {e}"))?);
     }
-    Ok(compute_js_diff(files))
+    Ok(match normalize {
+        Some(n) => compute_normalized_diff(files, n),
+        None => compute_js_diff(files),
+    })
 }
 
 pub fn parse_js(text: &str) -> Result<Vec<Value>, String> {
@@ -152,7 +157,7 @@ pub fn compute_js_diff(files: Vec<Vec<Value>>) -> JsDiff {
         return JsDiff {
             items_a: Vec::new(),
             keyframes: 0,
-            to_rhs: HashMap::new(),
+            values: HashMap::new(),
             rows: Vec::new(),
             same_count: 0,
             added: 0,
@@ -169,7 +174,7 @@ pub fn compute_js_diff(files: Vec<Vec<Value>>) -> JsDiff {
     let later_curves = &curves[1..];
 
     let mut rows = Vec::new();
-    let mut to_rhs: HashMap<String, Vec<String>> = HashMap::new();
+    let mut values: HashMap<String, Vec<String>> = HashMap::new();
     let mut same_count = 0;
     let mut removed = 0;
 
@@ -208,8 +213,8 @@ pub fn compute_js_diff(files: Vec<Vec<Value>>) -> JsDiff {
         let label = vars.iter().min().cloned().unwrap_or_else(|| key.clone());
         let kind = if morphable {
             for var in vars {
-                let seq: Vec<String> = later_lists.iter().map(|l| l[var].0.clone()).collect();
-                to_rhs.insert(var.clone(), seq);
+                let seq: Vec<String> = lists.iter().map(|l| l[var].0.clone()).collect();
+                values.insert(var.clone(), seq);
             }
             JsDiffKind::Morph
         } else {
@@ -240,11 +245,217 @@ pub fn compute_js_diff(files: Vec<Vec<Value>>) -> JsDiff {
     JsDiff {
         items_a,
         keyframes,
-        to_rhs,
+        values,
         rows,
         same_count,
         added,
         removed,
+    }
+}
+
+fn parse_point_list(rhs: &str) -> Option<Vec<(f32, f32)>> {
+    let inner = rhs.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut out = Vec::new();
+    for part in inner.split("),(") {
+        let p = part.trim().trim_start_matches('(').trim_end_matches(')');
+        let (a, b) = p.split_once(',')?;
+        out.push((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?));
+    }
+    Some(out)
+}
+
+fn fmt_coord(v: f32) -> String {
+    if !v.is_finite() || v == 0.0 {
+        return "0".to_string();
+    }
+    let s = format!("{v:.4}");
+    let t = s.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() || t == "-" {
+        "0".to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+fn fmt_point_list(pts: &[(f32, f32)]) -> String {
+    let body: Vec<String> = pts
+        .iter()
+        .map(|(x, y)| format!("({},{})", fmt_coord(*x), fmt_coord(*y)))
+        .collect();
+    format!("[{}]", body.join(","))
+}
+
+fn frame_shapes(items: &[Value]) -> Vec<anim_norm::Shape> {
+    let lists = data_lists(items);
+    let curves = curves_of(&lists);
+    let mut out = Vec::new();
+    for vars in curves.values() {
+        if vars.len() < 3 {
+            continue;
+        }
+        let mut v = vars.clone();
+        v.sort();
+        let (Some(s1), Some(s2), Some(s3)) = (
+            parse_point_list(&lists[&v[0]].0),
+            parse_point_list(&lists[&v[1]].0),
+            parse_point_list(&lists[&v[2]].0),
+        ) else {
+            continue;
+        };
+        if s1.is_empty() || s2.is_empty() || s3.is_empty() {
+            continue;
+        }
+        let outline = anim_norm::chain_outline(&s1, &s2, &s3, 8);
+        if outline.len() < 3 {
+            continue;
+        }
+        out.push(anim_norm::Shape {
+            color: lists[&v[0]].1,
+            vars: v,
+            outline,
+        });
+    }
+    out
+}
+
+fn unused_letter(files: &[Vec<Value>]) -> char {
+    let mut taken: BTreeSet<char> = BTreeSet::new();
+    for items in files {
+        for var in data_lists(items).keys() {
+            if let Some(c) = var.chars().next() {
+                taken.insert(c);
+            }
+        }
+    }
+    ('A'..='Z')
+        .rev()
+        .find(|c| !taken.contains(c))
+        .unwrap_or('Z')
+}
+
+fn clone_curve_items(
+    items: &[Value],
+    src: &[String],
+    dst: &[String; 3],
+    color: &str,
+    next_id: &mut u32,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    for it in items {
+        let Some(latex) = it.get("latex").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !src.iter().any(|s| latex.contains(s.as_str())) {
+            continue;
+        }
+        let mut new_latex = latex.to_string();
+        for (s, d) in src.iter().zip(dst.iter()) {
+            new_latex = new_latex.replace(s.as_str(), d.as_str());
+        }
+        let mut clone = it.clone();
+        if let Some(obj) = clone.as_object_mut() {
+            obj.insert("id".to_string(), Value::String(next_id.to_string()));
+            obj.insert("latex".to_string(), Value::String(new_latex));
+            obj.insert("color".to_string(), Value::String(color.to_string()));
+            *next_id += 1;
+        }
+        out.push(clone);
+    }
+    out
+}
+
+fn hex_of(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+pub fn compute_normalized_diff(files: Vec<Vec<Value>>, points: usize) -> JsDiff {
+    let keyframes = files.len();
+    if keyframes == 0 {
+        return JsDiff {
+            items_a: Vec::new(),
+            keyframes: 0,
+            values: HashMap::new(),
+            rows: Vec::new(),
+            same_count: 0,
+            added: 0,
+            removed: 0,
+        };
+    }
+
+    let frames: Vec<Vec<anim_norm::Shape>> = files.iter().map(|f| frame_shapes(f)).collect();
+    let letter = unused_letter(&files);
+    let slots = anim_norm::normalize_frames(&frames, points.max(3));
+
+    let mut items_a = files.into_iter().next().unwrap_or_default();
+    let mut next_id = max_id(&items_a) + 1;
+    let template: Option<Vec<String>> = frames
+        .first()
+        .and_then(|f| f.first())
+        .map(|s| s.vars.clone());
+
+    let mut values: HashMap<String, Vec<String>> = HashMap::new();
+    let mut rows = Vec::new();
+    let mut fresh = 0usize;
+
+    for slot in &slots {
+        let vars: [String; 3] = match &slot.source {
+            Some(v) if v.len() >= 3 => [v[0].clone(), v[1].clone(), v[2].clone()],
+            _ => {
+                let (l, a, b, c) = crate::export::tex::subscript_parts(&letter.to_string(), fresh);
+                fresh += 1;
+                let made = [
+                    format!("{l}_{{{a}}}"),
+                    format!("{l}_{{{b}}}"),
+                    format!("{l}_{{{c}}}"),
+                ];
+                if let Some(src) = &template {
+                    let extra = clone_curve_items(
+                        &items_a,
+                        src,
+                        &made,
+                        &hex_of(slot.color),
+                        &mut next_id,
+                    );
+                    items_a.extend(extra);
+                }
+                made
+            }
+        };
+
+        let mut seq: [Vec<String>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        for ring in &slot.rings {
+            let (s1, s2, s3) = anim_norm::ring_to_spline(ring);
+            seq[0].push(fmt_point_list(&s1));
+            seq[1].push(fmt_point_list(&s2));
+            seq[2].push(fmt_point_list(&s3));
+        }
+        for (v, s) in vars.iter().zip(seq) {
+            values.insert(v.clone(), s);
+        }
+
+        let Some(key) = curve_key(&vars[0]) else {
+            continue;
+        };
+        rows.push(JsRow {
+            curve_key: key,
+            label: vars[0].clone(),
+            color: slot.color,
+            kind: JsDiffKind::Morph,
+            enabled: true,
+        });
+    }
+
+    JsDiff {
+        items_a,
+        keyframes,
+        values,
+        rows,
+        same_count: 0,
+        added: 0,
+        removed: 0,
     }
 }
 
@@ -287,7 +498,7 @@ pub fn build_animated_js(diff: &JsDiff, durs: &[f32]) -> String {
             let Some(latex) = it.get("latex").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Some((var, from_rhs)) = data_list_parts(latex) else {
+            let Some((var, _)) = data_list_parts(latex) else {
                 continue;
             };
             let Some(key) = curve_key(var) else {
@@ -296,13 +507,14 @@ pub fn build_animated_js(diff: &JsDiff, durs: &[f32]) -> String {
             if !enabled.contains(key.as_str()) {
                 continue;
             }
-            let Some(seq) = diff.to_rhs.get(var) else {
+            let Some(seq) = diff.values.get(var) else {
                 continue;
             };
-            let mut vals: Vec<&str> = Vec::with_capacity(seq.len() + 1);
-            vals.push(from_rhs);
-            vals.extend(seq.iter().map(|s| s.as_str()));
-            let mut out = format!("{var}={from_rhs}");
+            if seq.len() < 2 {
+                continue;
+            }
+            let vals: Vec<&str> = seq.iter().map(|s| s.as_str()).collect();
+            let mut out = format!("{var}={}", vals[0]);
             let mut start = 0.0f32;
             for i in 0..vals.len().saturating_sub(1) {
                 let d = seg_dur(i);
@@ -519,6 +731,107 @@ mod tests {
             .find(|r| r.curve_key == "A_1")
             .expect("changed curve");
         assert!(matches!(mismatch.kind, JsDiffKind::StructMismatch));
+    }
+
+    fn tri(var_base: &str, pts: &[(f32, f32); 3], color: &str) -> Vec<String> {
+        let quad = |p: (f32, f32)| format!("({},{})", p.0, p.1);
+        (1..=3)
+            .map(|k| {
+                format!(
+                    r##"{{ "type": "expression", "id": "{}", "color": "{color}", "latex": "{var_base}_{{{k}}}=[{},{},{}]" }}"##,
+                    100 + k,
+                    quad(pts[0]),
+                    quad(pts[1]),
+                    quad(pts[2])
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn normalize_morphs_keyframes_with_different_point_counts() {
+        let a = wrap(&[
+            r##"{ "type": "expression", "id": "5", "color": "#ff0000", "latex": "A_{1}=[(0,0),(4,0),(4,4)]" }"##,
+            r##"{ "type": "expression", "id": "6", "color": "#ff0000", "latex": "A_{2}=[(2,0),(4,2),(2,4)]" }"##,
+            r##"{ "type": "expression", "id": "7", "color": "#ff0000", "latex": "A_{3}=[(4,0),(4,4),(0,0)]" }"##,
+        ]);
+        let b = wrap(&[
+            r##"{ "type": "expression", "id": "5", "color": "#ff0000", "latex": "A_{1}=[(0,0),(6,0),(6,6),(0,6)]" }"##,
+            r##"{ "type": "expression", "id": "6", "color": "#ff0000", "latex": "A_{2}=[(3,0),(6,3),(3,6),(0,3)]" }"##,
+            r##"{ "type": "expression", "id": "7", "color": "#ff0000", "latex": "A_{3}=[(6,0),(6,6),(0,6),(0,0)]" }"##,
+        ]);
+        let ia = parse_js(&a).unwrap();
+        let ib = parse_js(&b).unwrap();
+
+        let plain = compute_js_diff(vec![ia.clone(), ib.clone()]);
+        assert!(
+            matches!(plain.rows[0].kind, JsDiffKind::StructMismatch),
+            "3 vs 4 points cannot morph without normalizing"
+        );
+
+        let diff = compute_normalized_diff(vec![ia, ib], 16);
+        assert_eq!(diff.rows.len(), 1);
+        assert!(matches!(diff.rows[0].kind, JsDiffKind::Morph));
+        for seq in diff.values.values() {
+            assert_eq!(seq.len(), 2, "one value per keyframe");
+            let counts: Vec<usize> = seq.iter().map(|s| s.matches('(').count()).collect();
+            assert_eq!(counts, vec![16, 16], "both keyframes resampled to 16 points");
+        }
+        let js = build_animated_js(&diff, &[2.0]);
+        assert!(js.contains("m_{orph}=0"));
+        assert!(js.contains("LOOP_FORWARD_REVERSE"));
+    }
+
+    #[test]
+    fn normalize_gives_a_new_shape_its_own_slot() {
+        let mut one = vec![
+            r##"{ "type": "folder", "id": "2", "title": "Art" }"##.to_string(),
+        ];
+        one.extend(tri("A", &[(0.0, 0.0), (2.0, 2.0), (4.0, 0.0)], "#ff0000"));
+        let a = wrap(&one.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+
+        let mut two = vec![
+            r##"{ "type": "folder", "id": "2", "title": "Art" }"##.to_string(),
+        ];
+        two.extend(tri("A", &[(0.0, 0.0), (2.0, 2.0), (4.0, 0.0)], "#ff0000"));
+        two.extend(tri(
+            "B",
+            &[(90.0, 90.0), (92.0, 92.0), (94.0, 90.0)],
+            "#0000ff",
+        ));
+        let b = wrap(&two.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+
+        let ia = parse_js(&a).unwrap();
+        let ib = parse_js(&b).unwrap();
+        let diff = compute_normalized_diff(vec![ia, ib], 12);
+
+        assert_eq!(diff.rows.len(), 2, "the newcomer gets a slot of its own");
+        let extra = diff
+            .rows
+            .iter()
+            .find(|r| !r.label.starts_with('A'))
+            .expect("a generated slot name");
+        let seq = diff
+            .values
+            .get(&extra.label)
+            .expect("values for the new slot");
+        assert_eq!(seq.len(), 2);
+        let first: Vec<String> = seq[0]
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split("),(")
+            .map(|s| s.trim_matches(['(', ')']).to_string())
+            .collect();
+        assert!(first.len() > 1);
+        assert!(
+            first.windows(2).all(|w| w[0] == w[1]),
+            "collapsed to one point in the frame before it exists, got {first:?}"
+        );
+        let js = build_animated_js(&diff, &[1.0]);
+        assert!(
+            js.contains(&format!("{}=", extra.label)),
+            "the new slot is emitted into the graph"
+        );
     }
 
     #[test]

@@ -175,6 +175,24 @@ impl App {
             .small()
             .weak(),
         );
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.anim_js_normalize, "Normalize keyframes")
+            .on_hover_text(
+                "Resample every shape to the same point count and match shapes across \
+                 keyframes by position, so files with different curves still morph. Shapes \
+                 that appear or vanish shrink to a point.",
+            );
+        if self.anim_js_normalize {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label("Points per shape:");
+                ui.add(egui::DragValue::new(&mut self.anim_js_points).range(4..=99))
+                    .on_hover_text(
+                        "Segments each shape is rebuilt with. Higher = closer to the \
+                         original outline, up to the Desmos domain of 99.",
+                    );
+            });
+        }
         ui.add_space(6.0);
 
         let want_durs = self.anim_js_files.len().saturating_sub(1);
@@ -261,18 +279,27 @@ impl App {
 
         let all_set = self.anim_js_files.iter().all(|f| f.is_some());
 
+        let normalized = self.anim_js_normalize;
         if let Some(diff) = &mut self.anim_js_diff {
             let changing = diff.changing_count();
-            let mut summary = format!(
-                "{} keyframes  ·  {} identical (kept static)  ·  {} changing",
-                diff.keyframes, diff.same_count, changing
-            );
-            if diff.added > 0 || diff.removed > 0 {
-                summary.push_str(&format!(
-                    "  ·  {} added / {} removed (not animated)",
-                    diff.added, diff.removed
-                ));
-            }
+            let summary = if normalized {
+                format!(
+                    "{} keyframes  ·  {} shape slots, all morphing",
+                    diff.keyframes, changing
+                )
+            } else {
+                let mut s = format!(
+                    "{} keyframes  ·  {} identical (kept static)  ·  {} changing",
+                    diff.keyframes, diff.same_count, changing
+                );
+                if diff.added > 0 || diff.removed > 0 {
+                    s.push_str(&format!(
+                        "  ·  {} added / {} removed (not animated)",
+                        diff.added, diff.removed
+                    ));
+                }
+                s
+            };
             ui.label(summary);
             ui.add_space(4.0);
 
@@ -286,7 +313,10 @@ impl App {
                         .spacing([14.0, 6.0])
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new("On").strong());
-                            ui.label(egui::RichText::new("Curve").strong());
+                            ui.label(
+                                egui::RichText::new(if normalized { "Shape" } else { "Curve" })
+                                    .strong(),
+                            );
                             ui.label(egui::RichText::new("Change").strong());
                             ui.end_row();
                             for r in diff.rows.iter_mut() {
@@ -342,7 +372,8 @@ impl App {
             self.anim_js_diff = None;
             return;
         }
-        match anim_js::load_js_seq(&paths) {
+        let normalize = self.anim_js_normalize.then_some(self.anim_js_points);
+        match anim_js::load_js_seq(&paths, normalize) {
             Ok(diff) => self.anim_js_diff = Some(diff),
             Err(e) => {
                 self.anim_js_diff = None;
@@ -395,7 +426,7 @@ fn row_label(ui: &mut egui::Ui, color: [u8; 3], label: &str) {
     });
 }
 
-fn file_combo(
+pub(crate) fn file_combo(
     ui: &mut egui::Ui,
     id: &str,
     files: &[PathBuf],
